@@ -8,6 +8,10 @@ import logging
 import mysql.connector
 from mysql.connector import Error
 from dbutils.pooled_db import PooledDB
+from dotenv import load_dotenv
+
+# Carregar variáveis de ambiente ANTES de configurar o banco
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
