@@ -2454,8 +2454,8 @@ async def submit_report(report_data: ReportCreate, background_tasks: BackgroundT
         # Process image if provided
         image_url = None
         if report_data.image_data:
-            # Generate a unique filename
-            filename = f"report_{int(time.time())}_{report_data.user_id}.jpg"
+            # Generate a unique filename with readable date format
+            filename = f"report_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_user{report_data.user_id}.jpg"
             image_url = upload_image_to_s3(report_data.image_data, filename)
             
             if not image_url:
