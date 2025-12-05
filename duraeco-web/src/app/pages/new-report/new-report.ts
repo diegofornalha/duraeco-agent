@@ -1,6 +1,7 @@
 import { Component, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
+import { AuthService } from '../../core/services/auth.service';
 import { ReportsService } from '../../core/services/reports.service';
 
 @Component({
@@ -170,6 +171,7 @@ import { ReportsService } from '../../core/services/reports.service';
   `
 })
 export class NewReport {
+  readonly authService = inject(AuthService);
   readonly reportsService = inject(ReportsService);
   private readonly router = inject(Router);
   private readonly fb = inject(FormBuilder);
@@ -248,11 +250,15 @@ export class NewReport {
 
     const { latitude, longitude, description } = this.form.getRawValue();
 
+    const user = this.authService.user();
+    if (!user) return;
+
     this.reportsService.createReport({
+      user_id: user.user_id,
       latitude,
       longitude,
       description,
-      image: this.selectedFile || undefined
+      image_data: this.imagePreview() || undefined
     }).subscribe({
       next: (response) => {
         if (response.success) {

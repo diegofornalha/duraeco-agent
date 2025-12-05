@@ -1,12 +1,13 @@
-import { Component, inject, OnInit, ChangeDetectionStrategy, signal } from '@angular/core';
+import { Component, inject, ChangeDetectionStrategy, signal, afterNextRender } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { FormsModule } from '@angular/forms';
 import { AuthService } from '../../core/services/auth.service';
 import { ReportsService, Report } from '../../core/services/reports.service';
 
 @Component({
   selector: 'app-reports',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink],
+  imports: [RouterLink, FormsModule],
   template: `
     <div class="min-h-screen bg-gray-50">
       <!-- Header -->
@@ -39,13 +40,13 @@ import { ReportsService, Report } from '../../core/services/reports.service';
               routerLink="/reports"
               class="py-4 border-b-2 border-emerald-600 text-emerald-600 font-medium"
             >
-              Relatórios
+              Relatos de Usuários
             </a>
             <a
               routerLink="/hotspots"
               class="py-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition"
             >
-              Hotspots
+              Diagnóstico
             </a>
           </div>
         </div>
@@ -54,7 +55,7 @@ import { ReportsService, Report } from '../../core/services/reports.service';
       <!-- Content -->
       <main class="max-w-7xl mx-auto px-4 py-8">
         <div class="flex justify-between items-center mb-6">
-          <h2 class="text-xl font-semibold text-gray-800">Relatórios de Resíduos</h2>
+          <h2 class="text-xl font-semibold text-gray-800">Relatos de Usuários</h2>
           <button
             (click)="showNewReport.set(true)"
             class="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition"
@@ -86,16 +87,16 @@ import { ReportsService, Report } from '../../core/services/reports.service';
                   <tr class="border-t hover:bg-gray-50">
                     <td class="px-6 py-4 font-medium">#{{ report.report_id }}</td>
                     <td class="px-6 py-4 text-gray-600">
-                      {{ report.address || formatCoords(report.latitude, report.longitude) }}
+                      {{ report.address_text || formatCoords(report.latitude, report.longitude) }}
                     </td>
                     <td class="px-6 py-4 text-gray-600">{{ report.waste_type || 'N/A' }}</td>
                     <td class="px-6 py-4">
-                      @if (report.severity) {
+                      @if (report.severity_score) {
                         <div class="flex items-center gap-1">
-                          @for (i of [1,2,3,4,5]; track i) {
+                          @for (i of [1,2,3,4,5,6,7,8,9,10]; track i) {
                             <div
                               class="w-2 h-2 rounded-full"
-                              [class]="i <= report.severity! ? 'bg-orange-500' : 'bg-gray-200'"
+                              [class]="i <= report.severity_score! ? 'bg-orange-500' : 'bg-gray-200'"
                             ></div>
                           }
                         </div>
@@ -112,7 +113,7 @@ import { ReportsService, Report } from '../../core/services/reports.service';
                       </span>
                     </td>
                     <td class="px-6 py-4 text-gray-500 text-sm">
-                      {{ formatDate(report.created_at) }}
+                      {{ formatDate(report.report_date) }}
                     </td>
                     <td class="px-6 py-4">
                       <button
@@ -145,26 +146,107 @@ import { ReportsService, Report } from '../../core/services/reports.service';
       <!-- Modal Novo Relatório -->
       @if (showNewReport()) {
         <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <h3 class="text-xl font-semibold mb-4">Novo Relatório</h3>
-            <p class="text-gray-500 mb-4">
-              Para criar um novo relatório, use o aplicativo móvel DuraEco que permite capturar fotos e localização automaticamente.
-            </p>
-            <div class="flex gap-3">
+          <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-start mb-6">
+              <h3 class="text-xl font-semibold">Novo Relatório de Resíduo</h3>
               <button
                 (click)="showNewReport.set(false)"
-                class="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                class="text-gray-400 hover:text-gray-600"
               >
-                Fechar
+                ✕
               </button>
-              <a
-                href="https://bit.ly/duraeco"
-                target="_blank"
-                class="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition text-center"
-              >
-                Baixar App
-              </a>
             </div>
+
+            <form (submit)="createReport($event)" class="space-y-4">
+              <!-- Descrição -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  Descrição *
+                </label>
+                <textarea
+                  [(ngModel)]="newReport.description"
+                  name="description"
+                  required
+                  rows="3"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  placeholder="Descreva o problema com resíduos..."
+                ></textarea>
+              </div>
+
+              <!-- Localização -->
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">
+                    Latitude *
+                  </label>
+                  <input
+                    type="number"
+                    [(ngModel)]="newReport.latitude"
+                    name="latitude"
+                    required
+                    step="0.0001"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    placeholder="-8.5569"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">
+                    Longitude *
+                  </label>
+                  <input
+                    type="number"
+                    [(ngModel)]="newReport.longitude"
+                    name="longitude"
+                    required
+                    step="0.0001"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    placeholder="125.5603"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="button"
+                (click)="getCurrentLocation()"
+                class="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
+              >
+                📍 Usar minha localização atual
+              </button>
+
+              <!-- Imagem (opcional) -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  Foto (opcional)
+                </label>
+                <input
+                  type="file"
+                  (change)="onImageSelect($event)"
+                  accept="image/*"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                />
+                @if (imagePreview()) {
+                  <img [src]="imagePreview()" class="mt-2 h-32 rounded-lg object-cover" />
+                }
+              </div>
+
+              <!-- Botões -->
+              <div class="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  (click)="showNewReport.set(false)"
+                  class="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  [disabled]="isSubmitting()"
+                  class="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition disabled:opacity-50"
+                >
+                  {{ isSubmitting() ? 'Enviando...' : 'Enviar Relatório' }}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       }
@@ -195,7 +277,7 @@ import { ReportsService, Report } from '../../core/services/reports.service';
               <div>
                 <span class="text-gray-500 text-sm">Localização</span>
                 <p class="font-medium">
-                  {{ selectedReport()!.address || formatCoords(selectedReport()!.latitude, selectedReport()!.longitude) }}
+                  {{ selectedReport()!.address_text || formatCoords(selectedReport()!.latitude, selectedReport()!.longitude) }}
                 </p>
               </div>
 
@@ -223,7 +305,7 @@ import { ReportsService, Report } from '../../core/services/reports.service';
 
               <div>
                 <span class="text-gray-500 text-sm">Data</span>
-                <p class="font-medium">{{ formatDate(selectedReport()!.created_at) }}</p>
+                <p class="font-medium">{{ formatDate(selectedReport()!.report_date) }}</p>
               </div>
             </div>
 
@@ -239,15 +321,33 @@ import { ReportsService, Report } from '../../core/services/reports.service';
     </div>
   `
 })
-export class Reports implements OnInit {
+export class Reports {
   readonly authService = inject(AuthService);
   readonly reportsService = inject(ReportsService);
 
   readonly showNewReport = signal(false);
   readonly selectedReport = signal<Report | null>(null);
+  readonly isSubmitting = signal(false);
+  readonly imagePreview = signal<string | null>(null);
 
-  ngOnInit(): void {
-    this.reportsService.getReports().subscribe();
+  newReport = {
+    description: '',
+    latitude: -8.5569,
+    longitude: 125.5603,
+    image: null as File | null
+  };
+
+  constructor() {
+    afterNextRender(() => {
+      console.log('Reports afterNextRender called');
+      this.reportsService.getReports().subscribe({
+        next: (data) => {
+          console.log('Reports loaded:', data);
+          console.log('Signal value:', this.reportsService.allReports());
+        },
+        error: (err) => console.error('Error loading reports:', err)
+      });
+    });
   }
 
   viewReport(report: Report): void {
@@ -260,8 +360,76 @@ export class Reports implements OnInit {
     }
   }
 
-  formatCoords(lat: number, lng: number): string {
-    return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  getCurrentLocation(): void {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          this.newReport.latitude = position.coords.latitude;
+          this.newReport.longitude = position.coords.longitude;
+        },
+        (error) => {
+          console.error('Erro ao obter localização:', error);
+          alert('Não foi possível obter sua localização. Por favor, digite manualmente.');
+        }
+      );
+    }
+  }
+
+  onImageSelect(event: Event): void {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (file) {
+      this.newReport.image = file;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        this.imagePreview.set(e.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  createReport(event: Event): void {
+    event.preventDefault();
+    this.isSubmitting.set(true);
+
+    const user = this.authService.user();
+    if (!user) {
+      alert('Você precisa estar logado para criar um relatório');
+      this.isSubmitting.set(false);
+      return;
+    }
+
+    this.reportsService.createReport({
+      user_id: user.user_id,
+      latitude: this.newReport.latitude,
+      longitude: this.newReport.longitude,
+      description: this.newReport.description,
+      image_data: this.imagePreview() || undefined
+    }).subscribe({
+      next: () => {
+        this.isSubmitting.set(false);
+        this.showNewReport.set(false);
+        // Resetar formulário
+        this.newReport = {
+          description: '',
+          latitude: -8.5569,
+          longitude: 125.5603,
+          image: null
+        };
+        this.imagePreview.set(null);
+        // Recarregar lista
+        this.reportsService.getReports().subscribe();
+      },
+      error: (err) => {
+        this.isSubmitting.set(false);
+        alert('Erro ao criar relatório: ' + (err.error?.message || 'Erro desconhecido'));
+      }
+    });
+  }
+
+  formatCoords(lat: string | number, lng: string | number): string {
+    const latNum = typeof lat === 'string' ? parseFloat(lat) : lat;
+    const lngNum = typeof lng === 'string' ? parseFloat(lng) : lng;
+    return `${latNum.toFixed(4)}, ${lngNum.toFixed(4)}`;
   }
 
   getStatusClass(status: string): string {

@@ -57,9 +57,9 @@ import { ReportsService, Report } from '../../core/services/reports.service';
             <span [class]="getStatusClass(report()?.status)">
               {{ getStatusLabel(report()?.status) }}
             </span>
-            @if (report()?.severity) {
+            @if (report()?.severity_score) {
               <span class="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-sm font-medium">
-                Severidade: {{ report()?.severity }}/10
+                Severidade: {{ report()?.severity_score }}/10
               </span>
             }
           </div>
@@ -83,7 +83,7 @@ import { ReportsService, Report } from '../../core/services/reports.service';
             <div>
               <h3 class="text-sm font-medium text-gray-500 mb-1">Localização</h3>
               <p class="text-gray-800">
-                {{ report()?.address || 'Coordenadas: ' + report()?.latitude + ', ' + report()?.longitude }}
+                {{ report()?.address_text || 'Coordenadas: ' + report()?.latitude + ', ' + report()?.longitude }}
               </p>
             </div>
 
@@ -125,11 +125,11 @@ import { ReportsService, Report } from '../../core/services/reports.service';
               </div>
               <div class="flex justify-between">
                 <dt class="text-gray-500">Criado em</dt>
-                <dd class="font-medium">{{ formatDate(report()?.created_at) }}</dd>
+                <dd class="font-medium">{{ formatDate(report()?.report_date) }}</dd>
               </div>
               <div class="flex justify-between">
                 <dt class="text-gray-500">Atualizado em</dt>
-                <dd class="font-medium">{{ formatDate(report()?.updated_at) }}</dd>
+                <dd class="font-medium">-</dd>
               </div>
             </dl>
           </div>

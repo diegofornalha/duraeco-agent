@@ -39,13 +39,13 @@ import { ReportsService, Hotspot } from '../../core/services/reports.service';
               routerLink="/reports"
               class="py-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition"
             >
-              Relatórios
+              Relatos de Usuários
             </a>
             <a
               routerLink="/hotspots"
               class="py-4 border-b-2 border-emerald-600 text-emerald-600 font-medium"
             >
-              Hotspots
+              Diagnóstico
             </a>
           </div>
         </div>
@@ -54,7 +54,7 @@ import { ReportsService, Hotspot } from '../../core/services/reports.service';
       <!-- Content -->
       <main class="max-w-7xl mx-auto px-4 py-8">
         <div class="flex justify-between items-center mb-6">
-          <h2 class="text-xl font-semibold text-gray-800">Hotspots de Resíduos</h2>
+          <h2 class="text-xl font-semibold text-gray-800">Diagnóstico de Áreas Críticas</h2>
           <div class="flex gap-2">
             <button
               (click)="filterStatus.set('all')"
@@ -170,7 +170,7 @@ import { ReportsService, Hotspot } from '../../core/services/reports.service';
                   <div class="text-2xl font-bold text-orange-600">
                     {{ selectedHotspot()!.total_reports }}
                   </div>
-                  <div class="text-sm text-orange-600">Relatórios</div>
+                  <div class="text-sm text-orange-600">Relatos</div>
                 </div>
                 <div class="bg-red-50 rounded-lg p-4 text-center">
                   <div class="text-2xl font-bold text-red-600">

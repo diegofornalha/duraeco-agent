@@ -177,7 +177,8 @@ export class Register {
     this.authService.register(data).subscribe({
       next: (response) => {
         if (response.success) {
-          this.showOtp.set(true);
+          // Registro direto - vai para o dashboard
+          this.router.navigate(['/dashboard']);
         } else {
           this.error.set(response.error || 'Erro ao cadastrar');
         }

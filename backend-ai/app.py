@@ -250,6 +250,7 @@ class ChangePassword(BaseModel):
     new_password: str
 
 class UpdateUserProfile(BaseModel):
+    username: Optional[str] = None
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     profile_image_url: Optional[str] = None
@@ -318,6 +319,221 @@ def verify_token(token):
         return None  # Token has expired
     except jwt.InvalidTokenError:
         return None  # Invalid token
+
+# ============== Chat Persistence Functions ==============
+
+def save_chat_session(session_id: str, user_id: int, title: str = None) -> bool:
+    """Create or update a chat session"""
+    connection = get_db_connection()
+    if not connection:
+        logger.error("Failed to get database connection for chat session")
+        return False
+
+    cursor = connection.cursor(dictionary=True)
+    try:
+        # Check if session exists
+        cursor.execute(
+            "SELECT session_id FROM chat_sessions WHERE session_id = %s",
+            (session_id,)
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            # Update existing session
+            cursor.execute(
+                "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE session_id = %s",
+                (session_id,)
+            )
+        else:
+            # Create new session
+            cursor.execute(
+                """INSERT INTO chat_sessions (session_id, user_id, title)
+                   VALUES (%s, %s, %s)""",
+                (session_id, user_id, title or "Nova conversa")
+            )
+
+        connection.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error saving chat session: {e}")
+        connection.rollback()
+        return False
+    finally:
+        cursor.close()
+        connection.close()
+
+def save_chat_message(session_id: str, user_id: int, role: str, content: str,
+                      image_url: str = None, map_url: str = None) -> bool:
+    """Save a chat message to the database"""
+    connection = get_db_connection()
+    if not connection:
+        logger.error("Failed to get database connection for chat message")
+        return False
+
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            """INSERT INTO chat_messages (session_id, user_id, role, content, image_url, map_url)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (session_id, user_id, role, content, image_url, map_url)
+        )
+        connection.commit()
+        logger.info(f"Saved {role} message for session {session_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving chat message: {e}")
+        connection.rollback()
+        return False
+    finally:
+        cursor.close()
+        connection.close()
+
+def get_chat_sessions(user_id: int, page: int = 1, per_page: int = 20) -> Dict:
+    """Get chat sessions for a user"""
+    connection = get_db_connection()
+    if not connection:
+        return {"error": "Database connection failed"}
+
+    cursor = connection.cursor(dictionary=True)
+    try:
+        offset = (page - 1) * per_page
+
+        # Get total count
+        cursor.execute(
+            "SELECT COUNT(*) as total FROM chat_sessions WHERE user_id = %s",
+            (user_id,)
+        )
+        total = cursor.fetchone()['total']
+
+        # Get sessions
+        cursor.execute(
+            """SELECT session_id, title, created_at, updated_at,
+                      (SELECT COUNT(*) FROM chat_messages WHERE chat_messages.session_id = chat_sessions.session_id) as message_count
+               FROM chat_sessions
+               WHERE user_id = %s
+               ORDER BY updated_at DESC
+               LIMIT %s OFFSET %s""",
+            (user_id, per_page, offset)
+        )
+        sessions = cursor.fetchall()
+
+        # Convert datetime to string
+        for session in sessions:
+            session['created_at'] = session['created_at'].isoformat() if session['created_at'] else None
+            session['updated_at'] = session['updated_at'].isoformat() if session['updated_at'] else None
+
+        return {
+            "sessions": sessions,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": (total + per_page - 1) // per_page
+        }
+    except Exception as e:
+        logger.error(f"Error getting chat sessions: {e}")
+        return {"error": str(e)}
+    finally:
+        cursor.close()
+        connection.close()
+
+def get_chat_messages(session_id: str, user_id: int, page: int = 1, per_page: int = 50) -> Dict:
+    """Get messages for a chat session"""
+    connection = get_db_connection()
+    if not connection:
+        return {"error": "Database connection failed"}
+
+    cursor = connection.cursor(dictionary=True)
+    try:
+        # Verify session belongs to user
+        cursor.execute(
+            "SELECT session_id FROM chat_sessions WHERE session_id = %s AND user_id = %s",
+            (session_id, user_id)
+        )
+        if not cursor.fetchone():
+            return {"error": "Session not found or access denied"}
+
+        offset = (page - 1) * per_page
+
+        # Get total count
+        cursor.execute(
+            "SELECT COUNT(*) as total FROM chat_messages WHERE session_id = %s",
+            (session_id,)
+        )
+        total = cursor.fetchone()['total']
+
+        # Get messages
+        cursor.execute(
+            """SELECT message_id, role, content, image_url, map_url, created_at
+               FROM chat_messages
+               WHERE session_id = %s
+               ORDER BY created_at ASC
+               LIMIT %s OFFSET %s""",
+            (session_id, per_page, offset)
+        )
+        messages = cursor.fetchall()
+
+        # Convert datetime to string
+        for msg in messages:
+            msg['created_at'] = msg['created_at'].isoformat() if msg['created_at'] else None
+
+        return {
+            "messages": messages,
+            "session_id": session_id,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": (total + per_page - 1) // per_page
+        }
+    except Exception as e:
+        logger.error(f"Error getting chat messages: {e}")
+        return {"error": str(e)}
+    finally:
+        cursor.close()
+        connection.close()
+
+def update_session_title(session_id: str, user_id: int, title: str) -> bool:
+    """Update the title of a chat session"""
+    connection = get_db_connection()
+    if not connection:
+        return False
+
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "UPDATE chat_sessions SET title = %s WHERE session_id = %s AND user_id = %s",
+            (title, session_id, user_id)
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        logger.error(f"Error updating session title: {e}")
+        return False
+    finally:
+        cursor.close()
+        connection.close()
+
+def delete_chat_session(session_id: str, user_id: int) -> bool:
+    """Delete a chat session and all its messages"""
+    connection = get_db_connection()
+    if not connection:
+        return False
+
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "DELETE FROM chat_sessions WHERE session_id = %s AND user_id = %s",
+            (session_id, user_id)
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        logger.error(f"Error deleting chat session: {e}")
+        return False
+    finally:
+        cursor.close()
+        connection.close()
+
+# ============== End Chat Persistence Functions ==============
 
 def check_and_create_hotspots(cursor, connection, report, report_id, analysis_result):
     """
@@ -1462,142 +1678,67 @@ async def check_existing_user(email: str = None, username: str = None):
 @app.post("/api/auth/register", response_model=dict)
 @limiter.limit("5/minute")  # Rate limit registration to prevent spam
 async def register(user_data: UserCreate, request: Request):
+    """Register a new user - creates account directly without email verification"""
     try:
         logger.info(f"Registration attempt for username: {user_data.username}, email: {user_data.email}")
-        
-        # Check if username or email already exists in users table
+
         connection = get_db_connection()
         cursor = connection.cursor(dictionary=True)
-        
+
+        # Check if username or email already exists
         cursor.execute(
             "SELECT user_id, username, email FROM users WHERE username = %s OR email = %s",
             (user_data.username, user_data.email)
         )
         existing_user = cursor.fetchone()
-        
+
         if existing_user:
             logger.warning(f"User already exists: {existing_user}")
             cursor.close()
             connection.close()
-            # More specific error message
             if existing_user['username'] == user_data.username and existing_user['email'] == user_data.email:
-                raise HTTPException(status_code=409, detail="Both username and email already exist in users table")
+                raise HTTPException(status_code=409, detail="Usuário e email já cadastrados")
             elif existing_user['username'] == user_data.username:
-                raise HTTPException(status_code=409, detail="Username already exists in users table")
+                raise HTTPException(status_code=409, detail="Nome de usuário já existe")
             else:
-                raise HTTPException(status_code=409, detail="Email already exists in users table")
-        
-        # Check if username or email exists in pending registrations
-        cursor.execute(
-            "SELECT registration_id, username, email, expires_at FROM pending_registrations WHERE username = %s OR email = %s",
-            (user_data.username, user_data.email)
-        )
-        existing_pending = cursor.fetchone()
-        
-        if existing_pending:
-            logger.info(f"Found pending registration: {existing_pending}")
-            
-            # Check if expired - if so, delete it
-            now = datetime.now()
-            if existing_pending['expires_at'] < now:
-                logger.info(f"Deleting expired pending registration: {existing_pending['registration_id']}")
-                cursor.execute(
-                    "DELETE FROM pending_registrations WHERE registration_id = %s",
-                    (existing_pending['registration_id'],)
-                )
-                connection.commit()
-                existing_pending = None  # Treat as if no pending registration
-            else:
-                # Not expired - check if it's the same user
-                if (existing_pending['username'] == user_data.username and 
-                    existing_pending['email'] == user_data.email):
-                    logger.info("Same user re-registering, updating existing pending registration")
-                    # Same user re-registering - this is OK, we'll update below
-                else:
-                    # Different user with conflicting credentials
-                    cursor.close()
-                    connection.close()
-                    if existing_pending['username'] == user_data.username:
-                        raise HTTPException(status_code=409, detail="Username is already being registered by another user")
-                    else:
-                        raise HTTPException(status_code=409, detail="Email is already being registered by another user")
-        
-        # Generate OTP
-        otp = generate_otp()
-        expires_at = datetime.now() + timedelta(minutes=10)
-        
+                raise HTTPException(status_code=409, detail="Email já cadastrado")
+
         # Hash the password
         hashed_password = hash_password(user_data.password)
-        
-        if existing_pending:
-            # Update existing pending registration (same user re-registering)
-            logger.info(f"Updating pending registration: {existing_pending['registration_id']}")
-            cursor.execute(
-                """
-                UPDATE pending_registrations 
-                SET username = %s, email = %s, phone_number = %s, password_hash = %s, 
-                    otp = %s, created_at = %s, expires_at = %s, attempts = 0
-                WHERE registration_id = %s
-                """,
-                (user_data.username, user_data.email, user_data.phone_number, hashed_password, 
-                 otp, datetime.now(), expires_at, existing_pending['registration_id'])
-            )
-        else:
-            # Create new pending registration
-            logger.info("Creating new pending registration")
-            cursor.execute(
-                """
-                INSERT INTO pending_registrations 
-                (username, email, phone_number, password_hash, otp, created_at, expires_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
-                (user_data.username, user_data.email, user_data.phone_number, hashed_password, otp, datetime.now(), expires_at)
-            )
-        
+
+        # Create user directly
+        cursor.execute(
+            """
+            INSERT INTO users (username, email, phone_number, password_hash, registration_date, account_status, verification_status)
+            VALUES (%s, %s, %s, %s, %s, 'active', 1)
+            """,
+            (user_data.username, user_data.email, user_data.phone_number, hashed_password, datetime.now())
+        )
         connection.commit()
-        
-        # Send OTP email
-        email_subject = "duraeco - Verify Your Email"
-        email_body = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-                <h2 style="color: #4CAF50;">duraeco - Email Verification</h2>
-                <p>Hello {user_data.username},</p>
-                <p>Thank you for registering with duraeco. To complete your registration, please use the following verification code:</p>
-                <div style="background-color: #f6f6f6; padding: 12px; text-align: center; border-radius: 5px; margin: 20px 0; font-size: 24px; letter-spacing: 5px; font-weight: bold;">
-                    {otp}
-                </div>
-                <p>This code is valid for 10 minutes. If you don't verify within this time, you'll need to register again.</p>
-                <p>If you did not request this registration, please ignore this email.</p>
-                <p>Thank you,<br>duraeco Team</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        # For development, log the OTP (remove in production)
-        logger.info(f"OTP for {user_data.email}: {otp}")
-        
-        # Send the actual email
-        email_sent = send_email(user_data.email, email_subject, email_body)
+
+        # Get the new user ID
+        user_id = cursor.lastrowid
+
+        # Generate token for auto-login
+        token = generate_token(user_id)
+
         cursor.close()
         connection.close()
-        
-        if not email_sent:
-            # Continue anyway but inform the user they may not receive the email
-            logger.warning(f"Failed to send verification email to {user_data.email}")
-        
-        logger.info(f"Registration successful for {user_data.username}")
+
+        logger.info(f"User registered successfully: {user_data.username} (ID: {user_id})")
+
         return {
             "status": "success",
-            "message": "Registration initiated. Please verify your email.",
-            "email": user_data.email,
-            "username": user_data.username,
-            "expires_at": expires_at.strftime('%Y-%m-%d %H:%M:%S'),
-            "otp": otp  # Include for development only, remove in production
+            "message": "Conta criada com sucesso!",
+            "token": token,
+            "user": {
+                "user_id": user_id,
+                "username": user_data.username,
+                "email": user_data.email,
+                "phone_number": user_data.phone_number
+            }
         }
-        
+
     except HTTPException as e:
         logger.error(f"Registration HTTPException: {e.detail}")
         raise e
@@ -2201,28 +2342,53 @@ async def update_user(user_id: int, update_data: UpdateUserProfile, current_user
         # Check if the requesting user is authorized to update this profile
         if int(current_user_id) != user_id:
             raise HTTPException(status_code=403, detail="Access denied. You can only update your own profile")
-        
+
+        connection = get_db_connection()
+        cursor = connection.cursor(dictionary=True)
+
         # Check if there are any fields to update
         update_fields = {}
+
+        # Verificar username duplicado
+        if update_data.username is not None:
+            cursor.execute(
+                "SELECT user_id FROM users WHERE username = %s AND user_id != %s",
+                (update_data.username, user_id)
+            )
+            if cursor.fetchone():
+                cursor.close()
+                connection.close()
+                raise HTTPException(status_code=409, detail="Nome de usuário já está em uso")
+            update_fields["username"] = update_data.username
+
+        # Verificar email duplicado
         if update_data.email is not None:
+            cursor.execute(
+                "SELECT user_id FROM users WHERE email = %s AND user_id != %s",
+                (update_data.email, user_id)
+            )
+            if cursor.fetchone():
+                cursor.close()
+                connection.close()
+                raise HTTPException(status_code=409, detail="Email já está em uso")
             update_fields["email"] = update_data.email
+
         if update_data.phone_number is not None:
             update_fields["phone_number"] = update_data.phone_number
         if update_data.profile_image_url is not None:
             update_fields["profile_image_url"] = update_data.profile_image_url
-            
+
         if not update_fields:
+            cursor.close()
+            connection.close()
             raise HTTPException(status_code=400, detail="No valid fields to update")
             
         # Construct the SQL SET clause for the fields to update
         set_clause = ", ".join([f"{field} = %s" for field in update_fields.keys()])
         values = list(update_fields.values())
         values.append(user_id)  # Add user_id for the WHERE clause
-        
+
         # Update the user profile
-        connection = get_db_connection()
-        cursor = connection.cursor(dictionary=True)
-        
         cursor.execute(
             f"UPDATE users SET {set_clause} WHERE user_id = %s",
             values
@@ -3058,16 +3224,21 @@ async def get_dashboard_statistics(user_id: int = Depends(get_user_from_token)):
             if 'report_date' in report and report['report_date']:
                 report['report_date'] = report['report_date'].strftime('%Y-%m-%d %H:%M:%S')
         
-        # Get community statistics (user ranking and total contributors)
+        # Get community statistics (user ranking, total contributors and registered users)
         cursor.execute(
             """
             SELECT COUNT(DISTINCT user_id) as total_contributors
             FROM reports
             WHERE user_id IS NOT NULL
             """)
-        
+
         community_result = cursor.fetchone()
         total_contributors = community_result['total_contributors'] if community_result else 0
+
+        # Get total registered users
+        cursor.execute("SELECT COUNT(*) as total_users FROM users WHERE verification_status = 1")
+        users_result = cursor.fetchone()
+        total_registered_users = users_result['total_users'] if users_result else 0
         
         # Get user's ranking based on total reports
         cursor.execute(
@@ -3091,6 +3262,7 @@ async def get_dashboard_statistics(user_id: int = Depends(get_user_from_token)):
         
         # Create community stats object
         community_stats = {
+            'total_registered_users': total_registered_users,
             'total_contributors': total_contributors,
             'user_rank': user_rank
         }
@@ -3339,6 +3511,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     session_id: Optional[str] = None
+    user_id: Optional[int] = None  # Required for message persistence
 
 # Database tool functions for AgentCore
 def get_waste_statistics() -> dict:
@@ -3564,9 +3737,17 @@ async def chat_with_agentcore(chat_request: ChatRequest, request: Request, x_api
     try:
         # Generate session ID if not provided
         session_id = chat_request.session_id or f"chat_{datetime.now().timestamp()}"
+        user_id = chat_request.user_id
 
         # Get the last user message
         user_message = chat_request.messages[-1].content if chat_request.messages else ""
+
+        # Save session and user message if user_id is provided
+        if user_id:
+            # Create or update session
+            save_chat_session(session_id, user_id, user_message[:100] if not chat_request.session_id else None)
+            # Save user message
+            save_chat_message(session_id, user_id, "user", user_message)
 
         # Build conversation context
         conversation_history = "\n".join([
@@ -3939,6 +4120,10 @@ User question: {user_message}"""
 
             logger.info(f"Chat response for session {session_id}: {reply_text[:100]}")
 
+            # Save assistant response if user_id is provided
+            if user_id:
+                save_chat_message(session_id, user_id, "assistant", reply_text)
+
             return {
                 "reply": reply_text,
                 "session_id": session_id,
@@ -3950,6 +4135,10 @@ User question: {user_message}"""
 
             # Fallback: Use keyword-based responses
             reply_text = handle_chat_fallback(user_message)
+
+            # Save fallback response if user_id is provided
+            if user_id:
+                save_chat_message(session_id, user_id, "assistant", reply_text)
 
             return {
                 "reply": reply_text,
@@ -3963,6 +4152,91 @@ User question: {user_message}"""
         logger.error(f"Chat API error: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ============== Chat History Endpoints ==============
+
+@app.get("/api/chat/sessions")
+async def list_chat_sessions(
+    user_id: int,
+    page: int = 1,
+    per_page: int = 20,
+    x_api_key: str = Header(None, alias="X-API-Key")
+):
+    """Get chat sessions for a user"""
+    # Verify API key
+    expected_api_key = os.getenv('API_SECRET_KEY')
+    if not x_api_key or x_api_key != expected_api_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    result = get_chat_sessions(user_id, page, per_page)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return {"success": True, "data": result}
+
+@app.get("/api/chat/sessions/{session_id}/messages")
+async def list_session_messages(
+    session_id: str,
+    user_id: int,
+    page: int = 1,
+    per_page: int = 50,
+    x_api_key: str = Header(None, alias="X-API-Key")
+):
+    """Get messages for a specific chat session"""
+    # Verify API key
+    expected_api_key = os.getenv('API_SECRET_KEY')
+    if not x_api_key or x_api_key != expected_api_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    result = get_chat_messages(session_id, user_id, page, per_page)
+    if "error" in result:
+        if "not found" in result["error"].lower():
+            raise HTTPException(status_code=404, detail=result["error"])
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return {"success": True, "data": result}
+
+class UpdateSessionTitle(BaseModel):
+    title: str
+
+@app.patch("/api/chat/sessions/{session_id}")
+async def update_chat_session_title(
+    session_id: str,
+    update_data: UpdateSessionTitle,
+    user_id: int,
+    x_api_key: str = Header(None, alias="X-API-Key")
+):
+    """Update the title of a chat session"""
+    # Verify API key
+    expected_api_key = os.getenv('API_SECRET_KEY')
+    if not x_api_key or x_api_key != expected_api_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    success = update_session_title(session_id, user_id, update_data.title)
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found or update failed")
+
+    return {"success": True, "message": "Session title updated"}
+
+@app.delete("/api/chat/sessions/{session_id}")
+async def delete_chat_session_endpoint(
+    session_id: str,
+    user_id: int,
+    x_api_key: str = Header(None, alias="X-API-Key")
+):
+    """Delete a chat session and all its messages"""
+    # Verify API key
+    expected_api_key = os.getenv('API_SECRET_KEY')
+    if not x_api_key or x_api_key != expected_api_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    success = delete_chat_session(session_id, user_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found or delete failed")
+
+    return {"success": True, "message": "Session deleted"}
+
+# ============== End Chat History Endpoints ==============
 
 def handle_chat_fallback(user_message: str) -> str:
     """Fallback handler when AgentCore is not available"""

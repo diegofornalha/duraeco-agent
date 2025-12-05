@@ -52,6 +52,19 @@ import { AuthService } from '../../core/services/auth.service';
 
           <form [formGroup]="profileForm" (ngSubmit)="onSaveProfile()" class="space-y-4">
             <div>
+              <label for="username" class="block text-sm font-medium text-gray-700 mb-1">
+                Nome de usuário
+              </label>
+              <input
+                id="username"
+                type="text"
+                formControlName="username"
+                class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                placeholder="seu_usuario"
+              />
+            </div>
+
+            <div>
               <label for="email" class="block text-sm font-medium text-gray-700 mb-1">
                 E-mail
               </label>
@@ -77,16 +90,20 @@ import { AuthService } from '../../core/services/auth.service';
             </div>
 
             <div>
-              <label for="profile_image_url" class="block text-sm font-medium text-gray-700 mb-1">
-                URL da Foto de Perfil
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                Foto de Perfil
               </label>
               <input
-                id="profile_image_url"
-                type="url"
-                formControlName="profile_image_url"
-                placeholder="https://exemplo.com/foto.jpg"
+                type="file"
+                (change)="onImageSelect($event)"
+                accept="image/*"
                 class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
               />
+              @if (imagePreview()) {
+                <div class="mt-3 text-center">
+                  <img [src]="imagePreview()" class="inline-block w-32 h-32 rounded-full object-cover border-4 border-emerald-100" />
+                </div>
+              }
             </div>
 
             @if (successMessage()) {
@@ -225,12 +242,14 @@ export class Profile implements OnInit {
   readonly saving = signal(false);
   readonly error = signal<string | null>(null);
   readonly successMessage = signal<string | null>(null);
+  readonly imagePreview = signal<string | null>(null);
 
   readonly changingPassword = signal(false);
   readonly passwordError = signal<string | null>(null);
   readonly passwordSuccess = signal<string | null>(null);
 
   readonly profileForm = this.fb.nonNullable.group({
+    username: ['', [Validators.required, Validators.minLength(3)]],
     email: ['', [Validators.required, Validators.email]],
     phone_number: [''],
     profile_image_url: ['']
@@ -246,6 +265,7 @@ export class Profile implements OnInit {
     const user = this.authService.user();
     if (user) {
       this.profileForm.patchValue({
+        username: user.username,
         email: user.email,
         phone_number: user.phone_number || '',
         profile_image_url: user.profile_image_url || ''
@@ -262,6 +282,19 @@ export class Profile implements OnInit {
     if (!dateStr) return '-';
     const date = new Date(dateStr);
     return date.toLocaleDateString('pt-BR');
+  }
+
+  onImageSelect(event: Event): void {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64 = e.target?.result as string;
+        this.imagePreview.set(base64);
+        this.profileForm.patchValue({ profile_image_url: base64 });
+      };
+      reader.readAsDataURL(file);
+    }
   }
 
   onSaveProfile(): void {

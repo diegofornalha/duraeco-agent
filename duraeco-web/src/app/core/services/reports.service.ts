@@ -1,6 +1,8 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
 import { ApiService, ApiResponse } from './api.service';
+import { environment } from '../../../environments/environment';
 
 export interface WasteType {
   waste_type_id: number;
@@ -13,16 +15,18 @@ export interface WasteType {
 export interface Report {
   report_id: number;
   user_id: number;
-  latitude: number;
-  longitude: number;
-  address?: string;
+  latitude: string;
+  longitude: string;
+  location_id?: number;
+  report_date: string;
   description?: string;
+  status: 'submitted' | 'analyzing' | 'analyzed' | 'resolved' | 'rejected';
   image_url?: string;
-  status: 'pending' | 'verified' | 'in_progress' | 'resolved' | 'rejected';
-  severity?: number;
+  device_info?: any;
+  address_text?: string;
+  severity_score?: number;
+  priority_level?: string;
   waste_type?: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface Hotspot {
@@ -39,11 +43,12 @@ export interface Hotspot {
 }
 
 export interface CreateReportRequest {
+  user_id: number;
   latitude: number;
   longitude: number;
-  address?: string;
-  description?: string;
-  image?: File;
+  description: string;
+  image_data?: string; // Base64
+  device_info?: any;
 }
 
 export interface NearbyRequest {
@@ -53,15 +58,23 @@ export interface NearbyRequest {
 }
 
 export interface DashboardStatistics {
-  total_reports: number;
-  total_users: number;
-  total_hotspots: number;
-  reports_today: number;
-  reports_this_week: number;
-  reports_this_month: number;
-  status_breakdown: { status: string; count: number }[];
-  top_waste_types: { name: string; count: number }[];
-  recent_reports: Report[];
+  status: string;
+  user_stats: {
+    total_reports: number;
+    analyzed_reports: number;
+    pending_reports: number;
+    resolved_reports: number;
+  };
+  waste_distribution: { name: string; count: number }[];
+  severity_distribution: { severity_score: number; count: number }[];
+  priority_distribution: { priority_level: string; count: number }[];
+  monthly_reports: { month: string; count: number }[];
+  recent_reports: any[];
+  community_stats: {
+    total_registered_users: number;
+    total_contributors: number;
+    user_rank: number | null;
+  };
 }
 
 @Injectable({
@@ -69,6 +82,7 @@ export interface DashboardStatistics {
 })
 export class ReportsService {
   private readonly api = inject(ApiService);
+  private readonly http = inject(HttpClient);
 
   // State
   private readonly reports = signal<Report[]>([]);
@@ -89,17 +103,18 @@ export class ReportsService {
   );
 
   readonly pendingReports = computed(() =>
-    this.reports().filter(r => r.status === 'pending')
+    this.reports().filter(r => r.status === 'submitted' || r.status === 'analyzing')
   );
 
   // Reports
-  getReports(page = 1, limit = 20): Observable<ApiResponse<{ reports: Report[]; total: number }>> {
+  getReports(page = 1, limit = 20): Observable<any> {
     this.loading.set(true);
-    return this.api.get<{ reports: Report[]; total: number }>(`/api/reports?page=${page}&limit=${limit}`).pipe(
+    return this.http.get<any>(`${environment.apiUrl}/api/reports?page=${page}&limit=${limit}`).pipe(
       tap(response => {
         this.loading.set(false);
-        if (response.success && response.data) {
-          this.reports.set(response.data.reports);
+        // Backend retorna: {status: "success", reports: [...], pagination: {...}}
+        if (response && response.status === 'success' && response.reports) {
+          this.reports.set(response.reports);
         }
       })
     );
@@ -109,20 +124,15 @@ export class ReportsService {
     return this.api.get<Report>(`/api/reports/${reportId}`);
   }
 
-  createReport(data: CreateReportRequest): Observable<ApiResponse<Report>> {
+  createReport(data: CreateReportRequest): Observable<any> {
     this.loading.set(true);
-    const formData = new FormData();
-    formData.append('latitude', data.latitude.toString());
-    formData.append('longitude', data.longitude.toString());
-    if (data.address) formData.append('address', data.address);
-    if (data.description) formData.append('description', data.description);
-    if (data.image) formData.append('image', data.image);
-
-    return this.api.postFormData<Report>('/api/reports', formData).pipe(
+    return this.http.post<any>(`${environment.apiUrl}/api/reports`, data).pipe(
       tap(response => {
         this.loading.set(false);
-        if (response.success && response.data) {
-          this.reports.update(reports => [response.data!, ...reports]);
+        // Backend retorna: {status: "success", message: "...", report_id: number}
+        if (response && response.status === 'success') {
+          // Recarregar lista após criar
+          this.getReports().subscribe();
         }
       })
     );
@@ -178,13 +188,17 @@ export class ReportsService {
   }
 
   // Dashboard
-  getStatistics(): Observable<ApiResponse<DashboardStatistics>> {
+  getStatistics(): Observable<any> {
     this.loading.set(true);
-    return this.api.get<DashboardStatistics>('/api/dashboard/statistics').pipe(
+    return this.http.get<DashboardStatistics>(`${environment.apiUrl}/api/dashboard/statistics`).pipe(
       tap(response => {
+        console.log('Dashboard API Response:', response);
         this.loading.set(false);
-        if (response.success && response.data) {
-          this.statistics.set(response.data);
+        // Backend retorna direto: {status, user_stats, waste_distribution, ...}
+        if (response && response.status === 'success') {
+          console.log('Setting statistics:', response);
+          this.statistics.set(response);
+          console.log('Statistics signal value:', this.statistics());
         }
       })
     );

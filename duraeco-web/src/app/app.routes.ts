@@ -43,11 +43,6 @@ export const routes: Routes = [
     canActivate: [authGuard]
   },
   {
-    path: 'map',
-    loadComponent: () => import('./pages/map/map').then(m => m.MapPage),
-    canActivate: [authGuard]
-  },
-  {
     path: 'chat',
     loadComponent: () => import('./pages/chat/chat').then(m => m.Chat),
     canActivate: [authGuard]

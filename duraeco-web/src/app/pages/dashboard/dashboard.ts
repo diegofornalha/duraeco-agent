@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { Component, inject, ChangeDetectionStrategy, afterNextRender } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { ReportsService } from '../../core/services/reports.service';
@@ -46,19 +46,13 @@ import { ReportsService } from '../../core/services/reports.service';
               routerLink="/reports"
               class="py-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition whitespace-nowrap"
             >
-              Relatórios
+              Relatos de Usuários
             </a>
             <a
               routerLink="/hotspots"
               class="py-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition whitespace-nowrap"
             >
-              Hotspots
-            </a>
-            <a
-              routerLink="/map"
-              class="py-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition whitespace-nowrap"
-            >
-              Mapa
+              Diagnóstico
             </a>
             <a
               routerLink="/chat"
@@ -78,60 +72,39 @@ import { ReportsService } from '../../core/services/reports.service';
           </div>
         } @else {
           <!-- Stats Cards -->
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
             <div class="bg-white rounded-xl shadow-sm p-6">
-              <div class="text-gray-500 text-sm mb-1">Total de Relatórios</div>
+              <div class="text-gray-500 text-xs mb-1">Meus Relatórios</div>
               <div class="text-3xl font-bold text-gray-800">
-                {{ reportsService.dashboardStats()?.total_reports || 0 }}
+                {{ reportsService.dashboardStats()?.user_stats?.total_reports || 0 }}
               </div>
             </div>
 
             <div class="bg-white rounded-xl shadow-sm p-6">
-              <div class="text-gray-500 text-sm mb-1">Usuários</div>
-              <div class="text-3xl font-bold text-gray-800">
-                {{ reportsService.dashboardStats()?.total_users || 0 }}
+              <div class="text-gray-500 text-xs mb-1">Cadastrados</div>
+              <div class="text-3xl font-bold text-blue-600">
+                {{ reportsService.dashboardStats()?.community_stats?.total_registered_users || 0 }}
               </div>
             </div>
 
             <div class="bg-white rounded-xl shadow-sm p-6">
-              <div class="text-gray-500 text-sm mb-1">Hotspots Ativos</div>
-              <div class="text-3xl font-bold text-orange-600">
-                {{ reportsService.dashboardStats()?.total_hotspots || 0 }}
-              </div>
-            </div>
-
-            <div class="bg-white rounded-xl shadow-sm p-6">
-              <div class="text-gray-500 text-sm mb-1">Relatórios Hoje</div>
+              <div class="text-gray-500 text-xs mb-1">Contribuindo</div>
               <div class="text-3xl font-bold text-emerald-600">
-                {{ reportsService.dashboardStats()?.reports_today || 0 }}
-              </div>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <!-- Status Breakdown -->
-            <div class="bg-white rounded-xl shadow-sm p-6">
-              <h2 class="text-lg font-semibold text-gray-800 mb-4">Status dos Relatórios</h2>
-              <div class="space-y-3">
-                @for (status of reportsService.dashboardStats()?.status_breakdown || []; track status.status) {
-                  <div class="flex justify-between items-center">
-                    <span class="text-gray-600 capitalize">{{ status.status }}</span>
-                    <span class="font-semibold text-gray-800">{{ status.count }}</span>
-                  </div>
-                }
+                {{ reportsService.dashboardStats()?.community_stats?.total_contributors || 0 }}
               </div>
             </div>
 
-            <!-- Top Waste Types -->
             <div class="bg-white rounded-xl shadow-sm p-6">
-              <h2 class="text-lg font-semibold text-gray-800 mb-4">Tipos de Resíduos</h2>
-              <div class="space-y-3">
-                @for (waste of reportsService.dashboardStats()?.top_waste_types || []; track waste.name) {
-                  <div class="flex justify-between items-center">
-                    <span class="text-gray-600">{{ waste.name }}</span>
-                    <span class="font-semibold text-gray-800">{{ waste.count }}</span>
-                  </div>
-                }
+              <div class="text-gray-500 text-xs mb-1">Pendentes</div>
+              <div class="text-3xl font-bold text-orange-600">
+                {{ reportsService.dashboardStats()?.user_stats?.pending_reports || 0 }}
+              </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm p-6">
+              <div class="text-gray-500 text-xs mb-1">Analisados</div>
+              <div class="text-3xl font-bold text-purple-600">
+                {{ reportsService.dashboardStats()?.user_stats?.analyzed_reports || 0 }}
               </div>
             </div>
           </div>
@@ -139,7 +112,7 @@ import { ReportsService } from '../../core/services/reports.service';
           <!-- Recent Reports -->
           <div class="mt-6 bg-white rounded-xl shadow-sm p-6">
             <div class="flex justify-between items-center mb-4">
-              <h2 class="text-lg font-semibold text-gray-800">Relatórios Recentes</h2>
+              <h2 class="text-lg font-semibold text-gray-800">Relatos Recentes</h2>
               <a routerLink="/reports" class="text-emerald-600 hover:underline text-sm">
                 Ver todos
               </a>
@@ -168,7 +141,7 @@ import { ReportsService } from '../../core/services/reports.service';
                         </span>
                       </td>
                       <td class="py-3 text-gray-500 text-sm">
-                        {{ formatDate(report.created_at) }}
+                        {{ formatDate(report.report_date) }}
                       </td>
                     </tr>
                   }
@@ -181,12 +154,18 @@ import { ReportsService } from '../../core/services/reports.service';
     </div>
   `
 })
-export class Dashboard implements OnInit {
+export class Dashboard {
   readonly authService = inject(AuthService);
   readonly reportsService = inject(ReportsService);
 
-  ngOnInit(): void {
-    this.reportsService.getStatistics().subscribe();
+  constructor() {
+    afterNextRender(() => {
+      console.log('Dashboard afterNextRender called');
+      this.reportsService.getStatistics().subscribe({
+        next: (data) => console.log('Statistics loaded:', data),
+        error: (err) => console.error('Error loading statistics:', err)
+      });
+    });
   }
 
   getStatusClass(status: string): string {

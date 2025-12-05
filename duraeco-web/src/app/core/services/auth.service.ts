@@ -108,11 +108,21 @@ export class AuthService {
     return this.token();
   }
 
-  register(data: RegisterRequest): Observable<ApiResponse> {
+  register(data: RegisterRequest): Observable<ApiResponse<AuthResponse>> {
     this.loading.set(true);
-    return this.http.post<{ status: string; message: string }>(`${this.baseUrl}/api/auth/register`, data).pipe(
-      map(response => ({ success: response.status === 'success', message: response.message })),
-      tap(() => this.loading.set(false)),
+    return this.http.post<{ status: string; message: string; token?: string; user?: User }>(`${this.baseUrl}/api/auth/register`, data).pipe(
+      tap(response => {
+        this.loading.set(false);
+        // Se veio token, salvar (registro direto sem OTP)
+        if (response.token && response.user) {
+          this.saveToStorage({ token: response.token, user: response.user });
+        }
+      }),
+      map(response => ({
+        success: response.status === 'success',
+        message: response.message,
+        data: response.token ? { token: response.token, user: response.user! } : undefined
+      })),
       catchError(error => {
         this.loading.set(false);
         return throwError(() => error);
@@ -192,16 +202,17 @@ export class AuthService {
   }
 
   updateUser(userId: number, data: Partial<User>): Observable<ApiResponse<User>> {
-    return this.http.patch<User>(`${this.baseUrl}/api/users/${userId}`, data).pipe(
+    return this.http.patch<any>(`${this.baseUrl}/api/users/${userId}`, data).pipe(
       tap(response => {
-        if (response) {
-          this.currentUser.set(response);
+        // Backend retorna: {status: "success", message: "...", user: {...}}
+        if (response && response.user) {
+          this.currentUser.set(response.user);
           if (typeof window !== 'undefined') {
-            localStorage.setItem('user', JSON.stringify(response));
+            localStorage.setItem('user', JSON.stringify(response.user));
           }
         }
       }),
-      map(response => ({ success: !!response, data: response }))
+      map(response => ({ success: response?.status === 'success', data: response?.user }))
     );
   }
 
