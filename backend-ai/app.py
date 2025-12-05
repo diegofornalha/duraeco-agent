@@ -728,9 +728,9 @@ def send_email(to_email, subject, body_html):
         logger.error(f"Failed to send email: {e}")
         return False
 
-def upload_image_to_s3(image_data, filename):
+def save_image_locally(image_data, filename):
     """
-    Save base64 encoded image to local storage (substitui S3)
+    Save base64 encoded image to local storage.
 
     Args:
         image_data: Base64 encoded image data (pode incluir prefixo data:image/...)
@@ -992,7 +992,7 @@ async def process_report_with_agent_async(report_id, image_url, latitude, longit
 
 async def analyze_image_with_claude(image_url, latitude=0.0, longitude=0.0, description=""):
     """
-    Analyze a waste image using Claude Code CLI
+    Analyze a waste image using Claude Vision API
 
     Args:
         image_url: Path to the image (local path starting with /static/)
@@ -1004,7 +1004,7 @@ async def analyze_image_with_claude(image_url, latitude=0.0, longitude=0.0, desc
         Tuple of (analysis_result dict, image_data base64 string)
     """
     try:
-        logger.info(f"Analyzing image with Claude Code CLI: {image_url}")
+        logger.info(f"Analyzing image with Claude Vision API: {image_url}")
 
         # Convert relative path to absolute local path
         if image_url.startswith('/static/'):
@@ -1068,94 +1068,6 @@ async def analyze_image_with_claude(image_url, latitude=0.0, longitude=0.0, desc
         return None, None
 
 
-# Alias for backwards compatibility
-async def analyze_image_with_bedrock(image_url, latitude=0.0, longitude=0.0, description=""):
-    """Backwards compatibility wrapper - calls analyze_image_with_claude"""
-    return await analyze_image_with_claude(image_url, latitude, longitude, description)
-
-
-# NOTA: A implementação antiga usando Amazon Bedrock/Nova foi removida
-# Agora usamos Claude Opus 4.5 Vision via analyze_waste_image
-# async def analyze_image_with_bedrock(image_url, latitude=0.0, longitude=0.0, description=""):
-#     """
-#     Analyze a waste image using Amazon Nova Pro via AgentCore
-#
-#     Args:
-#         image_url: URL to the image
-#         latitude: Latitude coordinate
-#         longitude: Longitude coordinate
-#         description: User-provided description
-#
-#     Returns:
-#         Tuple of (analysis_result dict, image_data base64 string)
-#     """
-#     max_attempts = 2  # Maximum number of retry attempts
-#     current_attempt = 0
-#
-#     while current_attempt < max_attempts:
-#         try:
-#             current_attempt += 1
-#             logger.info(f"Attempt {current_attempt} - Analyzing image with AgentCore from: {image_url}")
-#
-#             # Download the image
-#             import concurrent.futures
-#             loop = asyncio.get_event_loop()
-#             with concurrent.futures.ThreadPoolExecutor() as executor:
-#                 response = await loop.run_in_executor(executor, requests.get, image_url)
-#
-#             if response.status_code != 200:
-#                 logger.error(f"Failed to download image from {image_url}: {response.status_code}")
-#                 if current_attempt < max_attempts:
-#                     time.sleep(2)
-#                     continue
-#                 return None, None
-#
-#             # Log image details
-#             content_type = response.headers.get('Content-Type', 'Unknown')
-#             image_size = len(response.content)
-#             logger.info(f"Successfully downloaded image: Type={content_type}, Size={image_size} bytes")
-#
-#             # Convert image to base64
-#             image_data = base64.b64encode(response.content).decode('utf-8')
-#             logger.info(f"Converted image to base64 format (length: {len(image_data)} chars)")
-#
-#             # Call AgentCore agent for analysis
-#             agent_payload = {
-#                 "image_url": image_url,
-#                 "image_base64": image_data,
-#                 "location": {"lat": latitude, "lng": longitude},
-#                 "description": description
-#             }
-#
-#             # Use AgentCore for analysis - run in thread pool to avoid blocking
-#             with concurrent.futures.ThreadPoolExecutor() as executor:
-#                 agent_result = await loop.run_in_executor(
-#                     executor, analyze_waste_image, agent_payload
-#                 )
-#
-#             if not agent_result or not agent_result.get("success"):
-#                 logger.error(f"AgentCore analysis failed: {agent_result.get('error', 'Unknown error')}")
-#                 if current_attempt < max_attempts:
-#                     logger.info(f"Retrying... ({current_attempt}/{max_attempts})")
-#                     time.sleep(2)
-#                     continue
-#                 return None, None
-#
-#             # Extract analysis from AgentCore result
-#             analysis_result = agent_result.get("analysis", {})
-#             logger.info(f"AgentCore analysis complete: {analysis_result}")
-#
-#             return analysis_result, image_data  # Return both analysis and image data for embeddings
-#
-#         except Exception as e:
-#             logger.error(f"Error in analyze_image_with_bedrock (Attempt {current_attempt}/{max_attempts}): {e}")
-#             if current_attempt < max_attempts:
-#                 logger.info(f"Retrying due to exception... ({current_attempt}/{max_attempts})")
-#                 time.sleep(2)
-#                 continue
-#             return None, None
-#
-#     return None, None
 def extract_volume_number(volume_str):
     """Extract numeric value from volume string like '5 cubic meters' -> 5.0"""
     try:
@@ -1235,7 +1147,7 @@ async def process_report(report_id, background_tasks: BackgroundTasks):
         logger.info(f"Processing report {report_id} with image URL: {report['image_url']}")
 
         # Analyze image with Nova Pro via AgentCore
-        analysis_result, image_data = await analyze_image_with_bedrock(
+        analysis_result, image_data = await analyze_image_with_claude(
             report['image_url'],
             report['latitude'],
             report['longitude'],
@@ -2456,7 +2368,7 @@ async def submit_report(report_data: ReportCreate, background_tasks: BackgroundT
         if report_data.image_data:
             # Generate a unique filename with readable date format
             filename = f"report_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_user{report_data.user_id}.jpg"
-            image_url = upload_image_to_s3(report_data.image_data, filename)
+            image_url = save_image_locally(report_data.image_data, filename)
             
             if not image_url:
                 raise HTTPException(status_code=500, detail="Failed to upload image")
@@ -3457,7 +3369,7 @@ async def process_queue(background_tasks: BackgroundTasks, user_id: int = Depend
 async def test_nova_api(image_url: str, user_id: int = Depends(get_user_from_token)):
     try:
         # Simple test endpoint to check if the AgentCore/Nova API integration is working
-        analysis_result, _ = await analyze_image_with_bedrock(image_url, 0.0, 0.0, "Test image")
+        analysis_result, _ = await analyze_image_with_claude(image_url, 0.0, 0.0, "Test image")
         
         if not analysis_result:
             raise HTTPException(status_code=500, detail="Failed to analyze image")
