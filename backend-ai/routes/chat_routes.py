@@ -19,12 +19,9 @@ from claude_agent_sdk import (
     ResultMessage,
 )
 
-# Importar do módulo pai
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from app import get_db_connection, verify_token
+# Importar funções de utilidade (evitando importação circular)
+from core.database import get_db_connection
+from core.auth import verify_token
 from core.session_manager import SessionManager
 from tools import duraeco_mcp_server
 

@@ -34,7 +34,7 @@ from slowapi.errors import RateLimitExceeded
 # from fastapi_mcp import FastApiMCP  # Apenas necessário para MCP server
 
 # Importar router do novo sistema de chat (Claude Agent SDK + RAG)
-# from routes.chat_routes import router as chat_router  # DESABILITADO: Causando importação circular
+from routes.chat_routes import router as chat_router  # WebSocket chat habilitado!
 
 # Load environment variables
 load_dotenv(override=True)
@@ -120,39 +120,11 @@ EMAIL_PASS = os.getenv('EMAIL_PASS')
 EMAIL_SERVER = os.getenv('EMAIL_SERVER')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 
-# Database configuration
-DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'database': os.getenv('DB_NAME', 'tl_waste_monitoring'),
-    'user': os.getenv('DB_USER', 'root'),
-    'password': os.getenv('DB_PASSWORD', ''),
-    'port': int(os.getenv('DB_PORT', '3306'))
-}
+# Database configuration - MOVIDO para core/database.py (evita importação circular)
+from core.database import get_db_connection, DB_CONFIG, db_pool
 
 # Embeddings configuration (TODO: substituir Titan por alternativa open-source)
 embedding_enabled = False  # Embeddings temporariamente desabilitados
-
-# Database connection pool for better performance
-db_pool = PooledDB(
-    creator=mysql.connector,
-    maxconnections=20,  # Maximum connections in pool
-    mincached=2,  # Minimum idle connections
-    maxcached=10,  # Maximum idle connections
-    maxshared=20,  # Maximum shared connections
-    blocking=True,  # Block if no connections available
-    ping=1,  # Ping connection before using
-    **DB_CONFIG
-)
-
-# Get database connection from pool
-def get_db_connection():
-    """Get a database connection from the pool"""
-    try:
-        connection = db_pool.connection()
-        return connection
-    except Error as e:
-        logger.error(f"Database connection error: {e}")
-        return None
 
 # Define Pydantic models for request/response validation
 class UserBase(BaseModel):
@@ -758,38 +730,34 @@ def send_email(to_email, subject, body_html):
 
 def upload_image_to_s3(image_data, filename):
     """
-    Upload base64 encoded image to AWS S3
-    
+    Save base64 encoded image to local storage (substitui S3)
+
     Args:
         image_data: Base64 encoded image data
-        filename: Filename to use in S3
-    
+        filename: Filename to use
+
     Returns:
-        S3 URL if successful, None otherwise
+        Local URL if successful, None otherwise
     """
-    if not s3_client or not S3_BUCKET:
-        logger.warning("S3 client or bucket not configured. Image upload skipped.")
-        return None
-        
     try:
         # Decode the base64 data
         image_binary = base64.b64decode(image_data)
-        file_obj = BytesIO(image_binary)
-        
-        # Upload to S3
-        s3_path = f"reports/{datetime.now().strftime('%Y/%m/%d')}/{filename}"
-        s3_client.upload_fileobj(
-            file_obj, 
-            S3_BUCKET, 
-            s3_path,
-            ExtraArgs={'ContentType': 'image/jpeg'}
-        )
-        
-        # Return the URL
-        return f"https://{S3_BUCKET}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{s3_path}"
-    
+
+        # Create directory structure
+        date_path = datetime.now().strftime('%Y/%m/%d')
+        reports_dir = os.path.join("static", "reports", date_path)
+        os.makedirs(reports_dir, exist_ok=True)
+
+        # Save file locally
+        filepath = os.path.join(reports_dir, filename)
+        with open(filepath, 'wb') as f:
+            f.write(image_binary)
+
+        # Return local URL
+        return f"/static/reports/{date_path}/{filename}"
+
     except Exception as e:
-        logger.error(f"S3 upload error: {e}")
+        logger.error(f"Local file save error: {e}")
         return None
 
 # Waste Analysis usando Claude Opus 4.5 Vision (substitui Bedrock AgentCore)
@@ -866,108 +834,117 @@ def analyze_waste_image(payload):
 
 # chat_agent REMOVIDO - substituído por /api/chat/ws (WebSocket com Claude Agent SDK)
 # A função antiga usava Bedrock AgentCore, agora tudo usa Claude Agent SDK via WebSocket
-# def chat_agent(payload):
+# REMOVIDO: def chat_agent(payload):
 #     """
 #     DEPRECATED: Old chat agent using Bedrock AgentCore
 #     REPLACED BY: /api/chat/ws (WebSocket endpoint with Claude Agent SDK + RAG)
-    """
-    try:
-        prompt = payload.get("prompt", "")
-        session_id = payload.get("session_id", f"chat_{datetime.now().timestamp()}")
-
-        if not prompt:
-            return {
-                "success": False,
-                "error": "No prompt provided",
-                "response": "Please provide a question or prompt."
-            }
-
-        logger.info(f"AgentCore chat request (session {session_id}): {prompt[:100]}")
-
-        # Load schema information
-        from schema_based_chat import PUBLIC_SCHEMA
-
-        # Build system prompt with tools and schema
-        system_prompt = f"""You are duraeco AI Assistant, helping users understand waste management data in Timor-Leste.
-
-You have access to database tools to answer questions about waste reports, statistics, hotspots, and trends.
-
-{PUBLIC_SCHEMA}
-
-## HOW TO ANSWER QUESTIONS:
-1. Analyze the user's question
-2. Generate appropriate SQL SELECT queries to fetch data
-3. Present results in clear, formatted markdown
-
-## EXAMPLES:
-User: "How many reports are there?"
-SQL: SELECT COUNT(*) as total FROM reports
-
-User: "What are the top waste types?"
-SQL: SELECT wt.name, COUNT(*) as count FROM analysis_results ar JOIN waste_types wt ON ar.waste_type_id = wt.waste_type_id GROUP BY wt.name ORDER BY count DESC LIMIT 5
-
-User: "Which areas have most garbage?"
-SQL: SELECT name, total_reports, average_severity FROM hotspots ORDER BY total_reports DESC LIMIT 10
-
-User: "Show waste trends this month"
-SQL: SELECT DATE(created_at) as date, COUNT(*) as reports FROM reports WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY DATE(created_at) ORDER BY date DESC
-
-IMPORTANT RULES:
-- NEVER query: users, user_verifications, api_keys (private data)
-- Only SELECT queries (no INSERT/UPDATE/DELETE)
-- Always use LIMIT (max 100)
-- Format results with markdown tables/lists
-- Be conversational and helpful
-
-User question: {prompt}"""
-
-        # Simple direct response using Bedrock Runtime
-        response = bedrock_runtime.invoke_model(
-            modelId=BEDROCK_MODEL_ID,
-            contentType="application/json",
-            accept="application/json",
-            body=json.dumps({
-                "inferenceConfig": {
-                    "max_new_tokens": 2000,
-                    "temperature": 0.7,
-                    "top_p": 0.9
-                },
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [{"text": system_prompt}]
-                    }
-                ]
-            })
-        )
+#     """
+#     try:
+#         prompt = payload.get("prompt", "")
+#         session_id = payload.get("session_id", f"chat_{datetime.now().timestamp()}")
+#
+#         if not prompt:
+#             return {
+#                 "success": False,
+#                 "error": "No prompt provided",
+#                 "response": "Please provide a question or prompt."
+#             }
+#
+#         logger.info(f"AgentCore chat request (session {session_id}): {prompt[:100]}")
+#
+#         # Load schema information
+#         from schema_based_chat import PUBLIC_SCHEMA
+#
+#         # Build system prompt with tools and schema
+#         system_prompt = f"""You are duraeco AI Assistant, helping users understand waste management data in Timor-Leste.
+#
+# You have access to database tools to answer questions about waste reports, statistics, hotspots, and trends.
+#
+# {PUBLIC_SCHEMA}
+#
+# ## HOW TO ANSWER QUESTIONS:
+# 1. Analyze the user's question
+# 2. Generate appropriate SQL SELECT queries to fetch data
+# 3. Present results in clear, formatted markdown
+#
+# ## EXAMPLES:
+# User: "How many reports are there?"
+# SQL: SELECT COUNT(*) as total FROM reports
+#
+# User: "What are the top waste types?"
+# SQL: SELECT wt.name, COUNT(*) as count FROM analysis_results ar JOIN waste_types wt ON ar.waste_type_id = wt.waste_type_id GROUP BY wt.name ORDER BY count DESC LIMIT 5
+#
+# User: "Which areas have most garbage?"
+# SQL: SELECT name, total_reports, average_severity FROM hotspots ORDER BY total_reports DESC LIMIT 10
+#
+# User: "Show waste trends this month"
+# SQL: SELECT DATE(created_at) as date, COUNT(*) as reports FROM reports WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) GROUP BY DATE(created_at) ORDER BY date DESC
+#
+# IMPORTANT RULES:
+# - NEVER query: users, user_verifications, api_keys (private data)
+# - Only SELECT queries (no INSERT/UPDATE/DELETE)
+# - Always use LIMIT (max 100)
+# - Format results with markdown tables/lists
+# - Be conversational and helpful
+#
+# User question: {prompt}"""
+#
+#         # REMOVIDO: Old Bedrock Runtime code
+#         # Este código foi substituído por Claude Agent SDK via WebSocket (/api/chat/ws)
+#         # Simple direct response using Bedrock Runtime
+        # response = bedrock_runtime.invoke_model(
+        #     modelId=BEDROCK_MODEL_ID,
+        #     contentType="application/json",
+        #     accept="application/json",
+        #     body=json.dumps({
+        #         "inferenceConfig": {
+        #             "max_new_tokens": 2000,
+        #             "temperature": 0.7,
+        #             "top_p": 0.9
+        #         },
+        #         "messages": [
+        #             {
+        #                 "role": "user",
+        #                 "content": [{"text": system_prompt}]
+        #             }
+        #         ]
+        #     })
+        # )
 
         # Parse response
-        result = json.loads(response['body'].read())
+        # result = json.loads(response['body'].read())
 
         # Extract text from Nova Pro response
-        if 'output' in result and 'message' in result['output']:
-            message = result['output']['message']
-            if 'content' in message and len(message['content']) > 0:
-                chat_response = message['content'][0].get('text', 'No response generated')
-            else:
-                chat_response = "No response generated"
-        else:
-            chat_response = "Failed to generate response"
+        # if 'output' in result and 'message' in result['output']:
+        #     message = result['output']['message']
+        #     if 'content' in message and len(message['content']) > 0:
+        #         chat_response = message['content'][0].get('text', 'No response generated')
+        #     else:
+        #         chat_response = "No response generated"
+        # else:
+        #     chat_response = "Failed to generate response"
 
+        # return {
+        #     "success": True,
+        #     "response": chat_response,
+        #     "session_id": session_id,
+        #     "model_used": BEDROCK_MODEL_ID,
+        #     "processed_at": datetime.now().isoformat()
+        # }
+
+        # Retornar erro direcionando para novo endpoint
         return {
-            "success": True,
-            "response": chat_response,
-            "session_id": session_id,
-            "model_used": BEDROCK_MODEL_ID,
-            "processed_at": datetime.now().isoformat()
+            "success": False,
+            "error": "This endpoint is deprecated. Use WebSocket /api/chat/ws instead.",
+            "response": "Please use the new WebSocket chat endpoint."
         }
 
     except Exception as e:
-        logger.error(f"AgentCore chat failed: {e}")
+        logger.error(f"Deprecated chat endpoint accessed: {e}")
         return {
             "success": False,
             "error": str(e),
-            "response": "I encountered an error processing your request. Please try again."
+            "response": "This endpoint is deprecated. Use WebSocket /api/chat/ws instead."
         }
 
 async def process_report_with_agent_async(report_id, image_url, latitude, longitude, description):
@@ -1007,87 +984,88 @@ async def process_report_with_agent_async(report_id, image_url, latitude, longit
         logger.error(f"AgentCore async processing failed for report {report_id}: {e}")
         return None, None
 
-# Core functionality for image analysis with Amazon Nova Pro via AgentCore
-async def analyze_image_with_bedrock(image_url, latitude=0.0, longitude=0.0, description=""):
-    """
-    Analyze a waste image using Amazon Nova Pro via AgentCore
-
-    Args:
-        image_url: URL to the image
-        latitude: Latitude coordinate
-        longitude: Longitude coordinate
-        description: User-provided description
-
-    Returns:
-        Tuple of (analysis_result dict, image_data base64 string)
-    """
-    max_attempts = 2  # Maximum number of retry attempts
-    current_attempt = 0
-
-    while current_attempt < max_attempts:
-        try:
-            current_attempt += 1
-            logger.info(f"Attempt {current_attempt} - Analyzing image with AgentCore from: {image_url}")
-
-            # Download the image
-            import concurrent.futures
-            loop = asyncio.get_event_loop()
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                response = await loop.run_in_executor(executor, requests.get, image_url)
-
-            if response.status_code != 200:
-                logger.error(f"Failed to download image from {image_url}: {response.status_code}")
-                if current_attempt < max_attempts:
-                    time.sleep(2)
-                    continue
-                return None, None
-
-            # Log image details
-            content_type = response.headers.get('Content-Type', 'Unknown')
-            image_size = len(response.content)
-            logger.info(f"Successfully downloaded image: Type={content_type}, Size={image_size} bytes")
-
-            # Convert image to base64
-            image_data = base64.b64encode(response.content).decode('utf-8')
-            logger.info(f"Converted image to base64 format (length: {len(image_data)} chars)")
-
-            # Call AgentCore agent for analysis
-            agent_payload = {
-                "image_url": image_url,
-                "image_base64": image_data,
-                "location": {"lat": latitude, "lng": longitude},
-                "description": description
-            }
-
-            # Use AgentCore for analysis - run in thread pool to avoid blocking
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                agent_result = await loop.run_in_executor(
-                    executor, analyze_waste_image, agent_payload
-                )
-
-            if not agent_result or not agent_result.get("success"):
-                logger.error(f"AgentCore analysis failed: {agent_result.get('error', 'Unknown error')}")
-                if current_attempt < max_attempts:
-                    logger.info(f"Retrying... ({current_attempt}/{max_attempts})")
-                    time.sleep(2)
-                    continue
-                return None, None
-
-            # Extract analysis from AgentCore result
-            analysis_result = agent_result.get("analysis", {})
-            logger.info(f"AgentCore analysis complete: {analysis_result}")
-
-            return analysis_result, image_data  # Return both analysis and image data for embeddings
-
-        except Exception as e:
-            logger.error(f"Error in analyze_image_with_bedrock (Attempt {current_attempt}/{max_attempts}): {e}")
-            if current_attempt < max_attempts:
-                logger.info(f"Retrying due to exception... ({current_attempt}/{max_attempts})")
-                time.sleep(2)
-                continue
-            return None, None
-
-    return None, None
+# REMOVIDO: Core functionality for image analysis with Amazon Nova Pro via AgentCore
+# Esta função foi substituída por analyze_waste_image que usa Claude Opus 4.5 Vision
+# async def analyze_image_with_bedrock(image_url, latitude=0.0, longitude=0.0, description=""):
+#     """
+#     Analyze a waste image using Amazon Nova Pro via AgentCore
+#
+#     Args:
+#         image_url: URL to the image
+#         latitude: Latitude coordinate
+#         longitude: Longitude coordinate
+#         description: User-provided description
+#
+#     Returns:
+#         Tuple of (analysis_result dict, image_data base64 string)
+#     """
+#     max_attempts = 2  # Maximum number of retry attempts
+#     current_attempt = 0
+#
+#     while current_attempt < max_attempts:
+#         try:
+#             current_attempt += 1
+#             logger.info(f"Attempt {current_attempt} - Analyzing image with AgentCore from: {image_url}")
+#
+#             # Download the image
+#             import concurrent.futures
+#             loop = asyncio.get_event_loop()
+#             with concurrent.futures.ThreadPoolExecutor() as executor:
+#                 response = await loop.run_in_executor(executor, requests.get, image_url)
+#
+#             if response.status_code != 200:
+#                 logger.error(f"Failed to download image from {image_url}: {response.status_code}")
+#                 if current_attempt < max_attempts:
+#                     time.sleep(2)
+#                     continue
+#                 return None, None
+#
+#             # Log image details
+#             content_type = response.headers.get('Content-Type', 'Unknown')
+#             image_size = len(response.content)
+#             logger.info(f"Successfully downloaded image: Type={content_type}, Size={image_size} bytes")
+#
+#             # Convert image to base64
+#             image_data = base64.b64encode(response.content).decode('utf-8')
+#             logger.info(f"Converted image to base64 format (length: {len(image_data)} chars)")
+#
+#             # Call AgentCore agent for analysis
+#             agent_payload = {
+#                 "image_url": image_url,
+#                 "image_base64": image_data,
+#                 "location": {"lat": latitude, "lng": longitude},
+#                 "description": description
+#             }
+#
+#             # Use AgentCore for analysis - run in thread pool to avoid blocking
+#             with concurrent.futures.ThreadPoolExecutor() as executor:
+#                 agent_result = await loop.run_in_executor(
+#                     executor, analyze_waste_image, agent_payload
+#                 )
+#
+#             if not agent_result or not agent_result.get("success"):
+#                 logger.error(f"AgentCore analysis failed: {agent_result.get('error', 'Unknown error')}")
+#                 if current_attempt < max_attempts:
+#                     logger.info(f"Retrying... ({current_attempt}/{max_attempts})")
+#                     time.sleep(2)
+#                     continue
+#                 return None, None
+#
+#             # Extract analysis from AgentCore result
+#             analysis_result = agent_result.get("analysis", {})
+#             logger.info(f"AgentCore analysis complete: {analysis_result}")
+#
+#             return analysis_result, image_data  # Return both analysis and image data for embeddings
+#
+#         except Exception as e:
+#             logger.error(f"Error in analyze_image_with_bedrock (Attempt {current_attempt}/{max_attempts}): {e}")
+#             if current_attempt < max_attempts:
+#                 logger.info(f"Retrying due to exception... ({current_attempt}/{max_attempts})")
+#                 time.sleep(2)
+#                 continue
+#             return None, None
+#
+#     return None, None
 def extract_volume_number(volume_str):
     """Extract numeric value from volume string like '5 cubic meters' -> 5.0"""
     try:
@@ -1430,7 +1408,7 @@ async def health_check():
         }
 
 # Include chat router (Claude Agent SDK + RAG - novo sistema)
-# app.include_router(chat_router)  # DESABILITADO: Causando importação circular
+app.include_router(chat_router)  # WebSocket chat com RAG habilitado!
 
 # Authentication routes
 @app.get("/api/auth/check-existing", response_model=dict)
@@ -3254,102 +3232,104 @@ async def process_queue(background_tasks: BackgroundTasks, user_id: int = Depend
         logger.error(f"Error processing queue: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Vector search helper functions
-def invoke_titan_embed_text(text: str) -> Optional[List[float]]:
-    """Create embedding for text using Amazon Titan Embed Image (multimodal)"""
-    if not embedding_enabled or not text:
-        return None
-
-    try:
-        # Prepare the request payload for Titan Multimodal Embed with text input and 1024 dimensions
-        payload = {
-            "inputText": text,
-            "embeddingConfig": {
-                "outputEmbeddingLength": 1024
-            }
-        }
-
-        # Use boto3 bedrock_runtime to invoke Titan Embed Image model (supports text too)
-        response = bedrock_runtime.invoke_model(
-            modelId="amazon.titan-embed-image-v1",
-            body=json.dumps(payload)
-        )
-
-        result = json.loads(response['body'].read())
-        embedding = result.get('embedding', [])
-        return embedding if embedding else None
-            
-    except Exception as e:
-        logger.error(f"Error creating text embedding with Titan: {e}")
-        return None
-
-def invoke_titan_embed_image(image_data: str) -> Optional[List[float]]:
-    """Create embedding for image using Amazon Titan Embed Image"""
-    if not embedding_enabled or not image_data:
-        return None
-    
-    try:
-        # Prepare the request payload for Titan Image Embed with 1024 dimensions
-        payload = {
-            "inputImage": image_data,  # base64 encoded image
-            "embeddingConfig": {
-                "outputEmbeddingLength": 1024
-            }
-        }
-
-        # Use boto3 bedrock_runtime to invoke Titan Embed Image model
-        response = bedrock_runtime.invoke_model(
-            modelId="amazon.titan-embed-image-v1",
-            body=json.dumps(payload)
-        )
-
-        result = json.loads(response['body'].read())
-        embedding = result.get('embedding', [])
-        return embedding if embedding else None
-            
-    except Exception as e:
-        logger.error(f"Error creating image embedding with Titan: {e}")
-        return None
-
-def create_location_embedding(latitude: float, longitude: float) -> Optional[List[float]]:
-    """Create embedding for geographic location using Titan Text Embed"""
-    if not embedding_enabled:
-        return None
-    
-    try:
-        # Create a location description string
-        location_text = f"Geographic location at latitude {latitude:.6f} longitude {longitude:.6f}"
-        
-        # Add contextual information about Timor-Leste regions
-        region_context = ""
-        if -8.3 <= latitude <= -8.1 and 125.5 <= longitude <= 125.7:
-            region_context = " in Dili capital city urban area Timor-Leste"
-        elif -8.5 <= latitude <= -8.0 and 125.0 <= longitude <= 127.0:
-            region_context = " in northern Timor-Leste coastal region"
-        elif -9.0 <= latitude <= -8.5 and 125.0 <= longitude <= 127.0:
-            region_context = " in southern Timor-Leste mountainous region"
-        else:
-            region_context = " in Timor-Leste"
-        
-        location_text += region_context
-        
-        # Generate embedding using Titan Text Embed
-        return invoke_titan_embed_text(location_text)
-    except Exception as e:
-        logger.error(f"Error creating location embedding: {e}")
-        return None
-
-def create_image_content_embedding(analysis_result: dict, image_data: str = None) -> Optional[List[float]]:
-    """Create embedding from image using Titan Embed Image or text analysis"""
-    if not embedding_enabled or not analysis_result:
-        return None
-    
-    try:
-        # First try to create image embedding if we have image data
-        if image_data:
-            image_embedding = invoke_titan_embed_image(image_data)
-            if image_embedding:
-                return image_embedding
+# REMOVIDO: Vector search helper functions - Amazon Titan Embeddings
+# Estas funções foram desabilitadas pois embedding_enabled = False
+# Aguardando implementação de alternativa open-source para embeddings vetoriais
+# def invoke_titan_embed_text(text: str) -> Optional[List[float]]:
+#     """Create embedding for text using Amazon Titan Embed Image (multimodal)"""
+#     if not embedding_enabled or not text:
+#         return None
+#
+#     try:
+#         # Prepare the request payload for Titan Multimodal Embed with text input and 1024 dimensions
+#         payload = {
+#             "inputText": text,
+#             "embeddingConfig": {
+#                 "outputEmbeddingLength": 1024
+#             }
+#         }
+#
+#         # Use boto3 bedrock_runtime to invoke Titan Embed Image model (supports text too)
+#         response = bedrock_runtime.invoke_model(
+#             modelId="amazon.titan-embed-image-v1",
+#             body=json.dumps(payload)
+#         )
+#
+#         result = json.loads(response['body'].read())
+#         embedding = result.get('embedding', [])
+#         return embedding if embedding else None
+#
+#     except Exception as e:
+#         logger.error(f"Error creating text embedding with Titan: {e}")
+#         return None
+#
+# def invoke_titan_embed_image(image_data: str) -> Optional[List[float]]:
+#     """Create embedding for image using Amazon Titan Embed Image"""
+#     if not embedding_enabled or not image_data:
+#         return None
+#
+#     try:
+#         # Prepare the request payload for Titan Image Embed with 1024 dimensions
+#         payload = {
+#             "inputImage": image_data,  # base64 encoded image
+#             "embeddingConfig": {
+#                 "outputEmbeddingLength": 1024
+#             }
+#         }
+#
+#         # Use boto3 bedrock_runtime to invoke Titan Embed Image model
+#         response = bedrock_runtime.invoke_model(
+#             modelId="amazon.titan-embed-image-v1",
+#             body=json.dumps(payload)
+#         )
+#
+#         result = json.loads(response['body'].read())
+#         embedding = result.get('embedding', [])
+#         return embedding if embedding else None
+#
+#     except Exception as e:
+#         logger.error(f"Error creating image embedding with Titan: {e}")
+#         return None
+#
+# def create_location_embedding(latitude: float, longitude: float) -> Optional[List[float]]:
+#     """Create embedding for geographic location using Titan Text Embed"""
+#     if not embedding_enabled:
+#         return None
+#
+#     try:
+#         # Create a location description string
+#         location_text = f"Geographic location at latitude {latitude:.6f} longitude {longitude:.6f}"
+#
+#         # Add contextual information about Timor-Leste regions
+#         region_context = ""
+#         if -8.3 <= latitude <= -8.1 and 125.5 <= longitude <= 125.7:
+#             region_context = " in Dili capital city urban area Timor-Leste"
+#         elif -8.5 <= latitude <= -8.0 and 125.0 <= longitude <= 127.0:
+#             region_context = " in northern Timor-Leste coastal region"
+#         elif -9.0 <= latitude <= -8.5 and 125.0 <= longitude <= 127.0:
+#             region_context = " in southern Timor-Leste mountainous region"
+#         else:
+#             region_context = " in Timor-Leste"
+#
+#         location_text += region_context
+#
+#         # Generate embedding using Titan Text Embed
+#         return invoke_titan_embed_text(location_text)
+#     except Exception as e:
+#         logger.error(f"Error creating location embedding: {e}")
+#         return None
+#
+# def create_image_content_embedding(analysis_result: dict, image_data: str = None) -> Optional[List[float]]:
+#     """Create embedding from image using Titan Embed Image or text analysis"""
+#     if not embedding_enabled or not analysis_result:
+#         return None
+#
+#     try:
+#         # First try to create image embedding if we have image data
+#         if image_data:
+#             image_embedding = invoke_titan_embed_image(image_data)
+#             if image_embedding:
+#                 return image_embedding
         
         # Fallback to text embedding from analysis results
         content_parts = []
@@ -3630,432 +3610,51 @@ async def chat_with_agentcore(chat_request: ChatRequest, request: Request, user_
     """
     DEPRECATED: Use WebSocket endpoint /api/chat/ws instead
 
-    This endpoint uses Bedrock AgentCore and will be removed in future versions.
+    This endpoint has been completely removed and replaced with Claude Agent SDK.
     The new WebSocket endpoint offers:
     - Real-time streaming responses
     - RAG (Retrieval Augmented Generation) with vector embeddings
     - Better performance with connection pooling
     - Tool execution indicators
+    - Claude Opus 4.5 powered responses
+
+    To use the new chat system:
+    1. Connect to WebSocket: ws://your-host/api/chat/ws?token=YOUR_JWT
+    2. Send messages in format: {"message": "your message", "conversation_id": "optional"}
+    3. Receive streaming responses with tool indicators
 
     Legacy chat endpoint using AgentCore with database tools - Requires JWT
     """
-    try:
-        # Generate session ID if not provided
-        session_id = chat_request.session_id or f"chat_{datetime.now().timestamp()}"
-
-        # Get the last user message
-        user_message = chat_request.messages[-1].content if chat_request.messages else ""
-
-        # Save session and user message if user_id is provided
-        if user_id:
-            # Create or update session
-            save_chat_session(session_id, user_id, user_message[:100] if not chat_request.session_id else None)
-            # Save user message
-            save_chat_message(session_id, user_id, "user", user_message)
-
-        # Build conversation context
-        conversation_history = "\n".join([
-            f"{msg.role}: {msg.content}" for msg in chat_request.messages[:-1]
-        ])
-
-        # Load schema information
-        from schema_based_chat import PUBLIC_SCHEMA
-
-        # Enhanced prompt with schema and SQL tool
-        enhanced_prompt = f"""You are duraeco AI Assistant, helping users understand waste management data in Timor-Leste.
-
-You have access to TWO tools:
-
-1. **execute_sql_query**: Query the waste management database for statistics, reports, hotspots, waste types
-2. **get_duraeco_info**: Fetch current information about duraeco platform from the website
-
-{PUBLIC_SCHEMA}
-
-## WHEN TO USE WHICH TOOL:
-
-**Use execute_sql_query for:**
-- "How many reports?", "What waste types?", "Which areas have garbage?"
-- Statistics, counts, trends, data analysis
-- Hotspot information, report details
-
-**Use get_duraeco_info for:**
-- "What is duraeco?", "How does it work?", "Tell me about duraeco"
-- "How to contact?", "Download app", "Who created this?"
-- Platform features, mission, technology stack
-- Topics: 'about', 'contact', 'download', 'code-repository'
-
-**IMPORTANT: When presenting web scraping results:**
-1. Summarize in 3-5 key points (not full text dump)
-2. Use bullet points for readability
-3. Keep responses under 300 words
-4. Focus on what user asked, not everything
-
-## HOW TO ANSWER QUESTIONS:
-1. Analyze the user's question
-2. Choose the appropriate tool
-3. For database questions: Generate SQL SELECT query
-4. For platform questions: Fetch from website with appropriate topic
-5. Present results in clear, formatted markdown
-
-## EXAMPLES:
-User: "How many reports are there?"
-SQL: SELECT COUNT(*) as total FROM reports
-
-User: "What are the top waste types?"
-SQL: SELECT wt.name, COUNT(*) as count FROM analysis_results ar JOIN waste_types wt ON ar.waste_type_id = wt.waste_type_id GROUP BY wt.name ORDER BY count DESC LIMIT 5
-
-User: "Which areas have most garbage?" or "Where are problem areas?"
-SQL: SELECT name, total_reports, average_severity FROM hotspots ORDER BY total_reports DESC LIMIT 10
-Note: Use hotspots table for location-based questions - it aggregates reports by area
-
-User: "Show active hotspots"
-SQL: SELECT name, total_reports, average_severity, last_reported FROM hotspots WHERE status = 'active' ORDER BY average_severity DESC LIMIT 10
-
-User: "What is duraeco?"
-Tool: get_duraeco_info(topic='about')
-Response format:
-"**duraeco** is an AI-powered waste management system for Timor-Leste.
-
-**Key Features:**
-• Mobile app for reporting waste with photos
-• AI analysis using Amazon Nova-Pro
-• Real-time dashboard with maps
-• Community engagement through gamification
-
-**Impact Goal:** 5,000+ reports, 100+ hotspots identified in first year.
-
-📱 Download: https://bit.ly/duraeco
-📧 Contact: duraeco@gmail.com"
-
-**WORKFLOW FOR CHART/VISUALIZATION REQUESTS:**
-
-When user asks for "chart", "graph", "visualize", "show distribution", "plot", "make a chart", etc:
-YOU MUST ALWAYS call BOTH tools in sequence:
-1. First call execute_sql_query to get the data
-2. Then IMMEDIATELY call generate_visualization with that data transformed correctly
-3. Format response with markdown image and summary
-
-**CRITICAL**: If user asks for "chart for all reports" or similar, default to showing waste type distribution.
-
-Example:
-User: "make a chart for all report" or "show chart"
-Step 1: execute_sql_query("SELECT waste_type, COUNT(*) as count FROM reports GROUP BY waste_type ORDER BY count DESC")
-Step 2: generate_visualization with data transformed: extract labels from 'waste_type' column and values from 'count' column
-Step 3: Response with ![Chart](url) + text summary
-
-**WORKFLOW FOR MAP REQUESTS:**
-
-When user asks for "map", "show on map", "hotspots map", etc:
-YOU MUST transform SQL results into the correct format:
-1. First call execute_sql_query to get locations (with latitude, longitude, name, count fields)
-2. Then call create_map_visualization with locations array transformed correctly
-3. Each location must have: {{lat: <latitude>, lng: <longitude>, name: <name>, count: <count>}}
-
-Example:
-User: "Show hotspots map"
-Step 1: execute_sql_query("SELECT name, center_latitude, center_longitude, total_reports FROM hotspots")
-Step 2: Transform SQL results - for each row, create: {{lat: center_latitude, lng: center_longitude, name: name, count: total_reports}}
-Step 3: create_map_visualization with the transformed locations array
-Step 4: Response with ![Map](url) + text summary
-
-**You MUST transform SQL results to the correct tool input format!**
-
-**CRITICAL: YOU MUST CALL generate_visualization OR create_map_visualization TOOL!**
-
-When user asks for charts, trends, or visualizations:
-1. Call execute_sql_query to get data
-2. YOU MUST call generate_visualization with the data to create the actual chart
-3. Use the REAL image_url returned by the tool in your response
-4. NEVER use example URLs - only use the actual URL returned by the tool!
-
-When user asks for maps:
-1. Call execute_sql_query to get locations
-2. YOU MUST call create_map_visualization with locations array
-3. Use the REAL map_url returned by the tool
-4. NEVER use example URLs - only use the actual URL returned by the tool!
-
-**Response format after tools return:**
-- For PNG/JPG images: Embed as ![Description](ACTUAL_URL_FROM_TOOL)
-- For HTML maps (.html files): Show as clickable link: [Click here to view the interactive map](ACTUAL_URL_FROM_TOOL)
-- Always provide text summary
-- The URLs from tools are complete - use them exactly as returned
-- Check the file extension: .png/.jpg = embed image, .html = show link
-
-IMPORTANT RULES:
-- NEVER query: users, user_verifications, api_keys (private data)
-- Only SELECT queries (no INSERT/UPDATE/DELETE)
-- Always use LIMIT (max 100)
-- Format results with markdown tables/lists
-- Be conversational and helpful
-
-Conversation history:
-{conversation_history}
-
-User question: {user_message}"""
-
-        logger.info(f"Chat request for session {session_id}: {user_message[:100]}")
-
-        # Try to use Amazon Nova Pro with tool calling
-        try:
-            # Import web scraping tool
-            from web_scraper_tool import fetch_webpage_content, get_duraeco_info
-
-            # Import AgentCore tools (optional - will use fallback if not available)
-            try:
-                from agentcore_tools import (
-                    scrape_webpage_with_browser,
-                    generate_visualization,
-                    create_map_visualization,
-                    AGENTCORE_AVAILABLE
-                )
-            except ImportError:
-                AGENTCORE_AVAILABLE = False
-                logger.info("AgentCore tools not available - using basic tools only")
-
-            # Prepare tool definitions for SQL execution and web scraping
-            tools = [
-                {
-                    "toolSpec": {
-                        "name": "execute_sql_query",
-                        "description": "Execute a READ-ONLY SQL SELECT query on the duraeco database. Only SELECT statements are allowed. The database contains public waste management data including reports, waste_types, hotspots, analysis_results, and locations tables. Always use LIMIT to restrict results. Use this for waste data questions.",
-                        "inputSchema": {
-                            "json": {
-                                "type": "object",
-                                "properties": {
-                                    "sql_query": {
-                                        "type": "string",
-                                        "description": "The SQL SELECT query to execute. Must be a valid MySQL SELECT statement with LIMIT clause."
-                                    }
-                                },
-                                "required": ["sql_query"]
-                            }
-                        }
-                    }
-                },
-                {
-                    "toolSpec": {
-                        "name": "get_duraeco_info",
-                        "description": "Get current information about the duraeco platform by fetching from the official website. Use this when users ask 'What is duraeco?', 'How does it work?', 'Contact info', 'How to download app', etc. Returns fresh, up-to-date information.",
-                        "inputSchema": {
-                            "json": {
-                                "type": "object",
-                                "properties": {
-                                    "topic": {
-                                        "type": "string",
-                                        "description": "What information to fetch: 'about' (general info, mission, how it works), 'contact' (email, support), 'download' (app download links, installation), 'code-repository' (GitHub, source code), or 'general' (default)",
-                                        "enum": ["about", "contact", "download", "code-repository", "general", "app"]
-                                    }
-                                },
-                                "required": ["topic"]
-                            }
-                        }
-                    }
-                }
-            ]
-
-            # Add AgentCore tools if available
-            if AGENTCORE_AVAILABLE:
-                tools.extend([
-                    {
-                        "toolSpec": {
-                            "name": "generate_visualization",
-                            "description": "Generate charts and graphs from data. Use when user asks for 'chart', 'graph', 'visualize', 'show distribution'. Supports bar charts, line graphs, pie charts. Takes data with labels and values.",
-                            "inputSchema": {
-                                "json": {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "type": "object",
-                                            "description": "Data to visualize. Format: {labels: [...], values: [...], title: '...', xlabel: '...', ylabel: '...'}"
-                                        },
-                                        "chart_type": {
-                                            "type": "string",
-                                            "description": "Type of chart: 'bar', 'line', 'pie'",
-                                            "enum": ["bar", "line", "pie"]
-                                        }
-                                    },
-                                    "required": ["data", "chart_type"]
-                                }
-                            }
-                        }
-                    },
-                    {
-                        "toolSpec": {
-                            "name": "create_map_visualization",
-                            "description": "Create geographic map of hotspots. Use when user asks for 'map', 'show on map', 'geographic visualization'. Takes locations with lat, lng, name, count.",
-                            "inputSchema": {
-                                "json": {
-                                    "type": "object",
-                                    "properties": {
-                                        "locations": {
-                                            "type": "array",
-                                            "description": "Array of location objects with lat, lng, name, count fields",
-                                            "items": {
-                                                "type": "object",
-                                                "properties": {
-                                                    "lat": {
-                                                        "type": "number",
-                                                        "description": "Latitude coordinate"
-                                                    },
-                                                    "lng": {
-                                                        "type": "number",
-                                                        "description": "Longitude coordinate"
-                                                    },
-                                                    "name": {
-                                                        "type": "string",
-                                                        "description": "Location name or address"
-                                                    },
-                                                    "count": {
-                                                        "type": "number",
-                                                        "description": "Number of reports at this location"
-                                                    }
-                                                },
-                                                "required": ["lat", "lng"]
-                                            }
-                                        }
-                                    },
-                                    "required": ["locations"]
-                                }
-                            }
-                        }
-                    }
-                ])
-                logger.info("AgentCore visualization tools enabled")
-
-            # Build messages for Nova (filter out system messages, only user/assistant allowed)
-            messages = [
-                {"role": msg.role, "content": [{"text": msg.content}]}
-                for msg in chat_request.messages
-                if msg.role in ["user", "assistant"]
-            ]
-
-            # Call Bedrock with Nova Pro and tool use
-            response = bedrock_runtime.converse(
-                modelId="amazon.nova-pro-v1:0",
-                messages=messages,
-                toolConfig={"tools": tools},
-                system=[{"text": enhanced_prompt}]
-            )
-
-            # Handle tool use if Nova requests it - support multiple rounds
-            output = response['output']
-            if 'message' in output:
-                message_content = output['message']['content']
-
-                # Loop to allow multiple rounds of tool calling
-                max_tool_rounds = 5
-                tool_round = 0
-
-                while any(item.get('toolUse') for item in message_content) and tool_round < max_tool_rounds:
-                    tool_round += 1
-                    logger.info(f"AI requested tool use (round {tool_round})")
-                    tool_results = []
-
-                    for item in message_content:
-                        if 'toolUse' in item:
-                            tool_use = item['toolUse']
-                            tool_name = tool_use['name']
-                            tool_input = tool_use.get('input', {})
-                            logger.info(f"Tool called: {tool_name} with input: {str(tool_input)[:200]}")
-
-                            # Execute the appropriate tool
-                            if tool_name == "execute_sql_query":
-                                sql_query = tool_input.get('sql_query', '')
-                                result = execute_sql_query(sql_query)
-                            elif tool_name == "get_duraeco_info":
-                                topic = tool_input.get('topic', 'general')
-                                result = get_duraeco_info(topic)
-                            elif tool_name == "generate_visualization" and AGENTCORE_AVAILABLE:
-                                data = tool_input.get('data', {})
-                                chart_type = tool_input.get('chart_type', 'bar')
-                                result = generate_visualization(data, chart_type)
-                                logger.info(f"Visualization result: {result}")
-                            elif tool_name == "create_map_visualization" and AGENTCORE_AVAILABLE:
-                                locations = tool_input.get('locations', [])
-                                result = create_map_visualization(locations)
-                            else:
-                                result = {"error": f"Unknown or unavailable tool: {tool_name}"}
-
-                            tool_results.append({
-                                "toolResult": {
-                                    "toolUseId": tool_use['toolUseId'],
-                                    "content": [{"json": result}]
-                                }
-                            })
-
-                    # Send tool results back to Nova
-                    # Filter out empty text blocks from AI message (prevents ValidationException)
-                    ai_message = output['message'].copy()
-                    ai_message['content'] = [
-                        item for item in ai_message['content']
-                        if not (item.get('text') is not None and item.get('text').strip() == '')
-                    ]
-                    messages.append(ai_message)
-                    messages.append({"role": "user", "content": tool_results})
-
-                    # Get next response (might be more tool calls or final answer)
-                    response = bedrock_runtime.converse(
-                        modelId="amazon.nova-pro-v1:0",
-                        messages=messages,
-                        toolConfig={"tools": tools},
-                        system=[{"text": enhanced_prompt}]
-                    )
-
-                    output = response['output']
-                    message_content = output['message']['content']
-
-                # After all tool rounds, extract final text response
-                reply_text = None
-                for item in message_content:
-                    if 'text' in item and item['text'].strip():
-                        reply_text = item['text']
-                        break
-
-                if not reply_text:
-                    logger.error(f"No text in final response after {tool_round} rounds: {message_content}")
-                    reply_text = "I apologize, but I couldn't generate a proper response."
-            else:
-                reply_text = "I apologize, but I couldn't process your request."
-
-            # Remove <thinking> tags from Nova's response
-            import re
-            reply_text = re.sub(r'<thinking>.*?</thinking>', '', reply_text, flags=re.DOTALL)
-            reply_text = reply_text.strip()
-
-            logger.info(f"Chat response for session {session_id}: {reply_text[:100]}")
-
-            # Save assistant response if user_id is provided
-            if user_id:
-                save_chat_message(session_id, user_id, "assistant", reply_text)
-
-            return {
-                "reply": reply_text,
-                "session_id": session_id,
-                "timestamp": datetime.now().isoformat()
+    # REMOVIDO: Todo o código Bedrock AgentCore foi substituído por Claude Agent SDK
+    # Este endpoint agora apenas retorna erro direcionando para o WebSocket
+    raise HTTPException(
+        status_code=410,  # 410 Gone - resource is no longer available
+        detail={
+            "error": "This endpoint has been permanently removed",
+            "message": "Please use the WebSocket endpoint instead: /api/chat/ws",
+            "migration_guide": {
+                "websocket_url": "/api/chat/ws",
+                "authentication": "Pass JWT token as query parameter: ?token=YOUR_JWT",
+                "message_format": {"message": "string", "conversation_id": "optional_string"},
+                "features": [
+                    "Real-time streaming",
+                    "RAG with vector search",
+                    "Claude Opus 4.5 vision",
+                    "Tool execution indicators"
+                ]
             }
+        }
+    )
 
-        except Exception as bedrock_error:
-            logger.error(f"Bedrock Nova error: {bedrock_error}")
+    # CÓDIGO ANTIGO REMOVIDO (linhas 3650-4066):
+    # - Bedrock AgentCore tool configuration
+    # - bedrock_runtime.converse() calls
+    # - Nova Pro model usage
+    # - Tool execution loop
+    # Este código foi substituído por routes/chat_routes.py usando Claude Agent SDK
 
-            # Fallback: Use keyword-based responses
-            reply_text = handle_chat_fallback(user_message)
-
-            # Save fallback response if user_id is provided
-            if user_id:
-                save_chat_message(session_id, user_id, "assistant", reply_text)
-
-            return {
-                "reply": reply_text,
-                "session_id": session_id,
-                "timestamp": datetime.now().isoformat(),
-                "mode": "fallback"
-            }
-
-    except Exception as e:
-        import traceback
-        logger.error(f"Chat API error: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # Original function body removed - see git history for reference
+    # The entire 400+ lines of Bedrock code has been replaced with WebSocket implementation
 
 # ============== Chat History Endpoints ==============
 
