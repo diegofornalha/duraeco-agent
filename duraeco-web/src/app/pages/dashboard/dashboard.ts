@@ -74,6 +74,20 @@ import { ReportsService } from '../../core/services/reports.service';
           <!-- Stats Cards -->
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
             <div class="bg-white rounded-xl shadow-sm p-6">
+              <div class="text-gray-500 text-xs mb-1">Pessoas cadastradas para usar o agente</div>
+              <div class="text-3xl font-bold text-blue-600">
+                {{ reportsService.dashboardStats()?.community_stats?.total_registered_users || 0 }}
+              </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm p-6">
+              <div class="text-gray-500 text-xs mb-1">Pessoas que já estão usando</div>
+              <div class="text-3xl font-bold text-emerald-600">
+                {{ reportsService.dashboardStats()?.community_stats?.total_contributors || 0 }}
+              </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm p-6">
               <div class="text-gray-500 text-xs mb-1">Meus Relatórios</div>
               <div class="text-3xl font-bold text-gray-800">
                 {{ reportsService.dashboardStats()?.user_stats?.total_reports || 0 }}
@@ -81,16 +95,9 @@ import { ReportsService } from '../../core/services/reports.service';
             </div>
 
             <div class="bg-white rounded-xl shadow-sm p-6">
-              <div class="text-gray-500 text-xs mb-1">Cadastrados</div>
-              <div class="text-3xl font-bold text-blue-600">
-                {{ reportsService.dashboardStats()?.community_stats?.total_registered_users || 0 }}
-              </div>
-            </div>
-
-            <div class="bg-white rounded-xl shadow-sm p-6">
-              <div class="text-gray-500 text-xs mb-1">Contribuindo</div>
-              <div class="text-3xl font-bold text-emerald-600">
-                {{ reportsService.dashboardStats()?.community_stats?.total_contributors || 0 }}
+              <div class="text-gray-500 text-xs mb-1">Analisados</div>
+              <div class="text-3xl font-bold text-purple-600">
+                {{ reportsService.dashboardStats()?.user_stats?.analyzed_reports || 0 }}
               </div>
             </div>
 
@@ -98,13 +105,6 @@ import { ReportsService } from '../../core/services/reports.service';
               <div class="text-gray-500 text-xs mb-1">Pendentes</div>
               <div class="text-3xl font-bold text-orange-600">
                 {{ reportsService.dashboardStats()?.user_stats?.pending_reports || 0 }}
-              </div>
-            </div>
-
-            <div class="bg-white rounded-xl shadow-sm p-6">
-              <div class="text-gray-500 text-xs mb-1">Analisados</div>
-              <div class="text-3xl font-bold text-purple-600">
-                {{ reportsService.dashboardStats()?.user_stats?.analyzed_reports || 0 }}
               </div>
             </div>
           </div>
