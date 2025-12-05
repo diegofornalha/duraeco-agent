@@ -7,7 +7,7 @@ import os
 import logging
 import mysql.connector
 from mysql.connector import Error
-from DBUtils.PooledDB import PooledDB
+from dbutils.pooled_db import PooledDB
 
 logger = logging.getLogger(__name__)
 
