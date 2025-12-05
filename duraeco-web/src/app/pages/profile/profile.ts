@@ -1,4 +1,4 @@
-import { Component, inject, signal, ChangeDetectionStrategy, OnInit } from '@angular/core';
+import { Component, inject, signal, ChangeDetectionStrategy, afterNextRender } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
@@ -235,7 +235,7 @@ import { AuthService } from '../../core/services/auth.service';
     </div>
   `
 })
-export class Profile implements OnInit {
+export class Profile {
   readonly authService = inject(AuthService);
   private readonly fb = inject(FormBuilder);
 
@@ -261,16 +261,22 @@ export class Profile implements OnInit {
     confirm_password: ['', [Validators.required]]
   });
 
-  ngOnInit(): void {
-    const user = this.authService.user();
-    if (user) {
-      this.profileForm.patchValue({
-        username: user.username,
-        email: user.email,
-        phone_number: user.phone_number || '',
-        profile_image_url: user.profile_image_url || ''
-      });
-    }
+  constructor() {
+    afterNextRender(() => {
+      const user = this.authService.user();
+      if (user) {
+        this.profileForm.patchValue({
+          username: user.username,
+          email: user.email,
+          phone_number: user.phone_number || '',
+          profile_image_url: user.profile_image_url || ''
+        });
+        // Mostrar preview se já tem foto
+        if (user.profile_image_url) {
+          this.imagePreview.set(user.profile_image_url);
+        }
+      }
+    });
   }
 
   getInitials(): string {

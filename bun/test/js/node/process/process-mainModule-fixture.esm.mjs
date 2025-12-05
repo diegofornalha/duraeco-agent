@@ -1,1 +1,0 @@
-process.mainModule = 123;
