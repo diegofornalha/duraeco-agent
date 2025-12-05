@@ -12,8 +12,8 @@ from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, EmailStr
-import boto3
 import mysql.connector
 from mysql.connector import Error
 from dbutils.pooled_db import PooledDB
@@ -28,14 +28,13 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from dotenv import load_dotenv
 import numpy as np
-from bedrock_agentcore import BedrockAgentCoreApp
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 # from fastapi_mcp import FastApiMCP  # Apenas necessário para MCP server
 
 # Importar router do novo sistema de chat (Claude Agent SDK + RAG)
-from routes.chat_routes import router as chat_router
+# from routes.chat_routes import router as chat_router  # DESABILITADO: Causando importação circular
 
 # Load environment variables
 load_dotenv(override=True)
@@ -51,8 +50,8 @@ limiter = Limiter(key_func=get_remote_address)
 # Initialize FastAPI app
 app = FastAPI(
     title="duraeco API",
-    description="Environmental waste monitoring API for Timor-Leste powered by AWS Bedrock AgentCore",
-    version="1.0.0",
+    description="Environmental waste monitoring API powered by Claude Opus 4.5 with RAG",
+    version="2.0.0",  # Versão 2.0 - migrado para Claude Agent SDK
     docs_url=None if os.getenv("ENVIRONMENT") == "production" else "/docs",
     redoc_url=None if os.getenv("ENVIRONMENT") == "production" else "/redoc"
 )
@@ -72,7 +71,8 @@ app.add_middleware(
     max_age=3600,
 )
 
-# All charts are saved to S3 - no local static directory needed
+# Static files - Gráficos e mapas salvos localmente (substitui S3)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Initialize MCP Server - exposes API endpoints as MCP tools
 # Comentado: MCP é inicializado em mcp_server.py separadamente
@@ -84,90 +84,29 @@ app.add_middleware(
 # mcp.mount()
 # logger.info("MCP Server mounted at /mcp")
 
-# Amazon Bedrock AgentCore Configuration
-agentcore_app = BedrockAgentCoreApp()
-
-# Background task to clean up old charts from S3
+# Background task to clean up old local files
 import threading
 
-def cleanup_s3_charts():
-    """Delete all files in static/charts/ folder on S3 every hour"""
+def cleanup_local_files():
+    """Delete old files from static/charts/ and static/maps/ every hour"""
     while True:
         try:
             # Wait 1 hour
             time.sleep(3600)  # 3600 seconds = 1 hour
 
-            # Get S3 configuration
-            s3_bucket = os.getenv('S3_BUCKET_NAME')
-            if not s3_bucket:
-                logger.warning("S3_BUCKET_NAME not configured, skipping cleanup")
-                continue
-
-            # Initialize S3 client
-            s3_client = boto3.client(
-                's3',
-                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-                region_name=os.getenv('AWS_REGION', 'us-east-1')
-            )
-
-            # List all objects in static/charts/
-            prefix = 'static/charts/'
-            response = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=prefix)
-
-            if 'Contents' in response:
-                # Delete all files
-                objects_to_delete = [{'Key': obj['Key']} for obj in response['Contents']]
-
-                if objects_to_delete:
-                    s3_client.delete_objects(
-                        Bucket=s3_bucket,
-                        Delete={'Objects': objects_to_delete}
-                    )
-                    logger.info(f"Cleaned up {len(objects_to_delete)} chart files from S3")
-                else:
-                    logger.info("No chart files to clean up")
-            else:
-                logger.info("No chart files found in S3")
+            from tools.visualization_tools import cleanup_old_files
+            cleanup_old_files(max_age_hours=24)
 
         except Exception as e:
-            logger.error(f"Error cleaning up S3 charts: {e}")
+            logger.error(f"Error cleaning up local files: {e}")
 
 # Start cleanup task in background thread
-cleanup_thread = threading.Thread(target=cleanup_s3_charts, daemon=True)
+cleanup_thread = threading.Thread(target=cleanup_local_files, daemon=True)
 cleanup_thread.start()
-logger.info("Started S3 charts cleanup task (runs every 1 hour)")
+logger.info("Started local files cleanup task (runs every 1 hour, removes files older than 24h)")
 
-# Amazon Bedrock configuration
-BEDROCK_MODEL_ID = os.getenv('BEDROCK_MODEL_ID', 'amazon.nova-pro-v1:0')
-BEDROCK_REGION = os.getenv('AWS_REGION', 'us-east-1')
-
-# Initialize Bedrock client
-try:
-    bedrock_runtime = boto3.client(
-        'bedrock-runtime',
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-        region_name=BEDROCK_REGION
-    )
-    logger.info(f"Using Bedrock model: {BEDROCK_MODEL_ID}")
-except Exception as e:
-    logger.critical(f"Bedrock configuration failed: {e}")
-    raise ValueError("Failed to configure Bedrock client")
-
-# AWS S3 configuration
-try:
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-        region_name=BEDROCK_REGION
-    )
-    S3_BUCKET = os.getenv('S3_BUCKET_NAME')
-except Exception as e:
-    logger.warning(f"S3 client initialization failed: {e}. File uploads will be disabled.")
-    s3_client = None
-    S3_BUCKET = None
+# AWS Bedrock/S3 REMOVIDO - Agora usa Claude Agent SDK + storage local
+logger.info("Using Claude Opus 4.5 for vision + local storage (no AWS required)")
 
 # JWT configuration
 JWT_SECRET = os.getenv('JWT_SECRET', 'development_secret_do_not_use_in_production')
@@ -190,9 +129,8 @@ DB_CONFIG = {
     'port': int(os.getenv('DB_PORT', '3306'))
 }
 
-# Amazon Titan Embed configuration
-TITAN_EMBED_MODEL = "amazon.titan-embed-image-v1"
-embedding_enabled = True  # Embeddings are enabled with boto3 Bedrock client
+# Embeddings configuration (TODO: substituir Titan por alternativa open-source)
+embedding_enabled = False  # Embeddings temporariamente desabilitados
 
 # Database connection pool for better performance
 db_pool = PooledDB(
@@ -854,262 +792,68 @@ def upload_image_to_s3(image_data, filename):
         logger.error(f"S3 upload error: {e}")
         return None
 
-# Amazon Bedrock AgentCore Waste Analysis Agent
-@agentcore_app.entrypoint
+# Waste Analysis usando Claude Opus 4.5 Vision (substitui Bedrock AgentCore)
 def analyze_waste_image(payload):
     """
     duraeco AI Agent for analyzing waste and environmental pollution
-    Uses Amazon Bedrock/Nova for image analysis and waste categorization
+    NOW USES: Claude Opus 4.5 Vision (via Claude Agent SDK)
+    REMOVED: Amazon Bedrock/Nova dependency
     """
+    from tools.vision_tools import analyze_waste_image_direct
+
     try:
         image_url = payload.get("image_url")
         location = payload.get("location", {})
         description = payload.get("description", "")
         image_base64 = payload.get("image_base64", "")
+        latitude = location.get('lat', 0)
+        longitude = location.get('lng', 0)
 
-        # First prompt: Determine if the image contains waste/garbage
-        initial_prompt = f"""
-        Carefully examine this image and determine if it shows improper waste disposal, garbage, trash, or discarded materials in the environment.
-
-        Location: Latitude {location.get('lat')}, Longitude {location.get('lng')}
-        User Description: {description}
-
-        Only classify as waste/garbage if:
-        1. The items are clearly disposed of improperly in an outdoor environment (on streets, in water bodies, forests, etc.)
-        2. The items are trash/waste accumulated in trash cans, landfills, or garbage dumps
-        3. The items are clearly abandoned, broken, or dumped illegally
-
-        Do NOT classify as waste/garbage if:
-        1. The items are in normal use in their intended environment (e.g., electronics on a desk)
-        2. The items appear to be organized, clean, and in use
-        3. The items are products being displayed or used normally
-        4. The image shows an indoor setting with normal household/office items
-        5. The items are properly stored or displayed
-
-        Return your answer as a JSON object with the following structure:
-        {{
-          "contains_waste": true/false,
-          "confidence": 0-100,
-          "reasoning": "brief explanation",
-          "short_description": "concise description (max 8 words)",
-          "full_description": "detailed description of what you see in the image (2-3 sentences)"
-        }}
-        """
-
-        # Call Bedrock Nova for initial waste detection
-        response = bedrock_runtime.invoke_model(
-            modelId=BEDROCK_MODEL_ID,
-            contentType="application/json",
-            accept="application/json",
-            body=json.dumps({
-                "inferenceConfig": {
-                    "max_new_tokens": 1000,
-                    "temperature": 0.1,
-                    "top_p": 0.9
-                },
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "text": initial_prompt
-                            },
-                            {
-                                "image": {
-                                    "format": "jpeg",
-                                    "source": {
-                                        "bytes": image_base64
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                ]
-            })
+        # Usar Claude Opus 4.5 Vision para análise
+        result = analyze_waste_image_direct(
+            image_base64=image_base64,
+            latitude=latitude,
+            longitude=longitude,
+            description=description
         )
 
-        # Parse response
-        result = json.loads(response['body'].read())
-
-        # Extract text from Nova Pro response format
-        if 'output' in result and 'message' in result['output']:
-            message = result['output']['message']
-            if 'content' in message and len(message['content']) > 0:
-                initial_response = message['content'][0].get('text', '')
-            else:
-                logger.error("No content found in Bedrock response message")
-                initial_response = None
+        # Converter resultado para formato esperado
+        if result.get("is_waste"):
+            analysis = {
+                "waste_type": result.get("waste_type", "Unknown"),
+                "severity_score": result.get("severity_score", 5),
+                "priority_level": result.get("priority_level", "medium").lower(),
+                "environmental_impact": result.get("environmental_impact", ""),
+                "estimated_volume": result.get("volume_estimate", "Unknown"),
+                "safety_concerns": result.get("recommended_action", ""),
+                "analysis_notes": result.get("description", ""),
+                "waste_detection_confidence": int(result.get("confidence", 0.8) * 100),
+                "short_description": f"{result.get('waste_type', 'Waste')} detected",
+                "full_description": result.get("description", "")
+            }
         else:
-            logger.error(f"Unexpected Bedrock response format: {result}")
-            initial_response = None
-
-        if not initial_response:
-            return {
-                "success": False,
-                "error": "analysis_failed",
-                "message": "Failed to analyze image"
+            analysis = {
+                "waste_type": "Not Garbage",
+                "severity_score": 1,
+                "priority_level": "low",
+                "environmental_impact": "None - not waste material",
+                "estimated_volume": "0",
+                "safety_concerns": "None",
+                "analysis_notes": result.get("description", "No waste detected"),
+                "waste_detection_confidence": int(result.get("confidence", 0.8) * 100),
+                "short_description": "Not garbage",
+                "full_description": result.get("description", "Image does not contain waste")
             }
-
-        # Extract JSON from response
-        json_match = re.search(r'\{.*\}', initial_response, re.DOTALL)
-        if json_match:
-            waste_check = json.loads(json_match.group())
-        else:
-            waste_check = {
-                "contains_waste": False,
-                "confidence": 75,
-                "reasoning": "Failed to parse response",
-                "short_description": "Unable to determine content",
-                "full_description": "Unable to generate a detailed description."
-            }
-
-        # Get short and full descriptions
-        short_description = waste_check.get("short_description", "")
-        if len(short_description.split()) > 8:
-            short_description = " ".join(short_description.split()[:8])
-
-        full_description = waste_check.get("full_description", "")
-        if not full_description:
-            full_description = f"{waste_check.get('reasoning', 'No details available.')} {short_description}"
-
-        # If the image doesn't contain waste, return minimal analysis
-        if not waste_check.get("contains_waste", False):
-            return {
-                "success": True,
-                "analysis": {
-                    "waste_type": "Not Garbage",
-                    "severity_score": 1,
-                    "priority_level": "low",
-                    "environmental_impact": "None - not waste material",
-                    "estimated_volume": "0",
-                    "safety_concerns": "None",
-                    "analysis_notes": f"This image does not appear to contain waste material. {waste_check.get('reasoning', '')}",
-                    "waste_detection_confidence": waste_check.get("confidence", 90),
-                    "short_description": short_description or "Not garbage",
-                    "full_description": full_description
-                },
-                "model_used": BEDROCK_MODEL_ID,
-                "processed_at": datetime.now().isoformat()
-            }
-
-        # If image contains waste, proceed with detailed analysis
-        detailed_prompt = """
-        Analyze the waste/garbage in this image.
-
-        Please determine:
-        1. The main type of waste visible (e.g., Plastic, Paper, Glass, Metal, Organic, Electronic, Construction, Mixed)
-        2. Severity assessment (scale 1-10, where 10 is most severe)
-        3. Priority level (low, medium, high, critical)
-        4. Environmental impact assessment
-        5. Estimated volume
-        6. Any safety concerns
-        7. Full description of the waste scenario (2-3 sentences, detailed)
-
-        Consider these factors for severity and priority:
-        - Quantity/volume of waste
-        - Hazard level of materials
-        - Proximity to water sources or sensitive areas
-        - Access to residential areas
-        - Biodegradability and longevity of waste
-
-        Structure your response as a JSON object with the following fields:
-        - waste_type: Main type of waste
-        - severity_score: Numeric score from 1-10
-        - priority_level: "low", "medium", "high", or "critical"
-        - environmental_impact: Brief description of environmental impact
-        - estimated_volume: Estimated volume in cubic meters
-        - safety_concerns: Any safety concerns identified
-        - analysis_notes: Detailed analysis and recommendations
-        - full_description: Detailed description of the waste scenario (2-3 sentences)
-
-        Keep your analysis focused, practical, and action-oriented.
-        """
-
-        # Call Bedrock Nova for detailed analysis
-        response = bedrock_runtime.invoke_model(
-            modelId=BEDROCK_MODEL_ID,
-            contentType="application/json",
-            accept="application/json",
-            body=json.dumps({
-                "inferenceConfig": {
-                    "max_new_tokens": 1500,
-                    "temperature": 0.1,
-                    "top_p": 0.9
-                },
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "text": detailed_prompt
-                            },
-                            {
-                                "image": {
-                                    "format": "jpeg",
-                                    "source": {
-                                        "bytes": image_base64
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                ]
-            })
-        )
-
-        # Parse response
-        result = json.loads(response['body'].read())
-
-        # Extract text from Nova Pro response format
-        if 'output' in result and 'message' in result['output']:
-            message = result['output']['message']
-            if 'content' in message and len(message['content']) > 0:
-                detailed_response = message['content'][0].get('text', '')
-            else:
-                detailed_response = None
-        else:
-            detailed_response = None
-
-        if not detailed_response:
-            return {
-                "success": False,
-                "error": "analysis_failed",
-                "message": "Failed to analyze waste details"
-            }
-
-        # Extract JSON from response
-        json_match = re.search(r'\{.*\}', detailed_response, re.DOTALL)
-        if json_match:
-            analysis_result = json.loads(json_match.group())
-        else:
-            analysis_result = {
-                "waste_type": "Mixed",
-                "severity_score": 5,
-                "priority_level": "medium",
-                "environmental_impact": "Unable to determine from image",
-                "estimated_volume": "Unknown",
-                "safety_concerns": "Unable to determine from image",
-                "analysis_notes": "Analysis completed with limited details",
-                "full_description": full_description
-            }
-
-        # Add the waste detection confidence and short description
-        analysis_result["waste_detection_confidence"] = waste_check.get("confidence", 100)
-        analysis_result["short_description"] = short_description or f"{analysis_result['waste_type']} waste, {analysis_result['priority_level']} priority"
-
-        # Ensure full_description exists in the result
-        if "full_description" not in analysis_result or not analysis_result["full_description"]:
-            analysis_result["full_description"] = full_description
 
         return {
             "success": True,
-            "analysis": analysis_result,
-            "model_used": BEDROCK_MODEL_ID,
+            "analysis": analysis,
+            "model_used": "Claude Opus 4.5 Vision",
             "processed_at": datetime.now().isoformat()
         }
 
     except Exception as e:
-        logger.error(f"AgentCore analysis failed: {e}")
+        logger.error(f"Claude vision analysis failed: {e}")
         return {
             "success": False,
             "error": str(e),
@@ -1119,12 +863,13 @@ def analyze_waste_image(payload):
                 "analysis_notes": "Analysis failed, manual review required"
             }
         }
-        
-@agentcore_app.entrypoint
-def chat_agent(payload):
-    """
-    duraeco Chat Agent for answering questions about waste data and the platform
-    Uses autonomous tool calling to query database, generate visualizations, and fetch info
+
+# chat_agent REMOVIDO - substituído por /api/chat/ws (WebSocket com Claude Agent SDK)
+# A função antiga usava Bedrock AgentCore, agora tudo usa Claude Agent SDK via WebSocket
+# def chat_agent(payload):
+#     """
+#     DEPRECATED: Old chat agent using Bedrock AgentCore
+#     REPLACED BY: /api/chat/ws (WebSocket endpoint with Claude Agent SDK + RAG)
     """
     try:
         prompt = payload.get("prompt", "")
@@ -1685,7 +1430,7 @@ async def health_check():
         }
 
 # Include chat router (Claude Agent SDK + RAG - novo sistema)
-app.include_router(chat_router)
+# app.include_router(chat_router)  # DESABILITADO: Causando importação circular
 
 # Authentication routes
 @app.get("/api/auth/check-existing", response_model=dict)
