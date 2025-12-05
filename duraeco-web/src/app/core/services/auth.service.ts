@@ -34,6 +34,7 @@ export interface OtpRequest {
 
 export interface AuthResponse {
   token: string;
+  refresh_token?: string;
   user: User;
   status?: string;
   message?: string;
@@ -57,7 +58,10 @@ export class AuthService {
   // State using signals
   private readonly currentUser = signal<User | null>(null);
   private readonly token = signal<string | null>(null);
+  private readonly refreshToken = signal<string | null>(null);
   private readonly loading = signal(false);
+
+  private refreshTimer?: number;
 
   // Computed values
   readonly user = computed(() => this.currentUser());
@@ -67,15 +71,20 @@ export class AuthService {
   constructor() {
     this.loadFromStorage();
     this.migrateDeprecatedKeys();
+    this.scheduleTokenRefresh();
   }
 
   private loadFromStorage(): void {
     if (typeof window !== 'undefined') {
       const storedToken = localStorage.getItem('access_token');
+      const storedRefreshToken = localStorage.getItem('refresh_token');
       const storedUser = localStorage.getItem('user');
 
       if (storedToken) {
         this.token.set(storedToken);
+      }
+      if (storedRefreshToken) {
+        this.refreshToken.set(storedRefreshToken);
       }
       if (storedUser) {
         try {
@@ -109,23 +118,116 @@ export class AuthService {
   private saveToStorage(response: AuthResponse): void {
     if (typeof window !== 'undefined') {
       localStorage.setItem('access_token', response.token);
+      if (response.refresh_token) {
+        localStorage.setItem('refresh_token', response.refresh_token);
+      }
       localStorage.setItem('user', JSON.stringify(response.user));
     }
     this.token.set(response.token);
+    if (response.refresh_token) {
+      this.refreshToken.set(response.refresh_token);
+    }
     this.currentUser.set(response.user);
+    this.scheduleTokenRefresh();
   }
 
   private clearStorage(): void {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
       localStorage.removeItem('user');
     }
     this.token.set(null);
+    this.refreshToken.set(null);
     this.currentUser.set(null);
+    this.cancelTokenRefresh();
+  }
+
+  private scheduleTokenRefresh(): void {
+    this.cancelTokenRefresh();
+
+    const token = this.token();
+    const refreshToken = this.refreshToken();
+
+    // Se não tem refresh token, não agendar (usuário antigo ou sem login)
+    if (!token || !refreshToken) {
+      return;
+    }
+
+    try {
+      // Decodificar JWT para pegar expiração
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      const expiresAt = payload.exp * 1000;  // converter para ms
+      const now = Date.now();
+
+      // Refresh 5 minutos antes de expirar
+      const refreshAt = expiresAt - (5 * 60 * 1000);
+      const delay = refreshAt - now;
+
+      if (delay > 0) {
+        this.refreshTimer = window.setTimeout(() => {
+          this.performTokenRefresh();
+        }, delay);
+
+        if (!environment.production) {
+          console.log(`[Auth] Token refresh agendado em ${Math.round(delay / 1000 / 60)} minutos`);
+        }
+      } else {
+        // Token já expirou ou está prestes a expirar, fazer refresh imediatamente
+        this.performTokenRefresh();
+      }
+    } catch (error) {
+      console.error('[Auth] Erro ao agendar refresh:', error);
+    }
+  }
+
+  private cancelTokenRefresh(): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+  }
+
+  private performTokenRefresh(): void {
+    const refreshToken = this.refreshToken();
+
+    if (!refreshToken) {
+      console.warn('[Auth] Refresh token não disponível');
+      this.logout();
+      return;
+    }
+
+    this.http.post<AuthResponse>(`${this.baseUrl}/api/auth/refresh`, {
+      refresh_token: refreshToken
+    }).pipe(
+      tap(response => {
+        if (response.token) {
+          // Salvar novo access token (refresh token permanece o mesmo)
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('access_token', response.token);
+          }
+          this.token.set(response.token);
+          this.scheduleTokenRefresh();
+
+          if (!environment.production) {
+            console.log('[Auth] Access token renovado com sucesso');
+          }
+        }
+      }),
+      catchError(error => {
+        console.error('[Auth] Erro ao renovar token:', error);
+        this.logout();
+        return throwError(() => error);
+      })
+    ).subscribe();
   }
 
   getToken(): string | null {
     return this.token();
+  }
+
+  getRefreshToken(): string | null {
+    return this.refreshToken();
   }
 
   register(data: RegisterRequest): Observable<ApiResponse<AuthResponse>> {
@@ -217,6 +319,17 @@ export class AuthService {
   }
 
   logout(): void {
+    const refreshToken = this.refreshToken();
+
+    if (refreshToken) {
+      // Revogar refresh token no backend
+      this.http.post(`${this.baseUrl}/api/auth/logout`, {
+        refresh_token: refreshToken
+      }).subscribe({
+        error: (err) => console.error('[Auth] Erro ao revogar token:', err)
+      });
+    }
+
     this.clearStorage();
     this.router.navigate(['/login']);
   }

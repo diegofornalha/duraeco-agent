@@ -169,6 +169,8 @@ except Exception as e:
 # JWT configuration
 JWT_SECRET = os.getenv('JWT_SECRET', 'development_secret_do_not_use_in_production')
 JWT_EXPIRATION_HOURS = int(os.getenv('JWT_EXPIRATION_HOURS', '24'))
+ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv('ACCESS_TOKEN_EXPIRE_HOURS', '6'))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv('REFRESH_TOKEN_EXPIRE_DAYS', '7'))
 
 # Email configuration
 EMAIL_USER = os.getenv('EMAIL_USER')
@@ -249,6 +251,12 @@ class ChangePassword(BaseModel):
     current_password: str
     new_password: str
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
+
 class UpdateUserProfile(BaseModel):
     username: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -299,16 +307,67 @@ def verify_password(stored_password, provided_password):
     return key == stored_key
 
 def generate_token(user_id):
-    """Generate a JWT token for the user"""
+    """Generate a JWT token for the user (deprecated, use generate_access_token)"""
     expiration = datetime.now() + timedelta(hours=JWT_EXPIRATION_HOURS)
-    
+
     payload = {
         'user_id': user_id,
         'exp': expiration
     }
-    
+
     # Encode JWT token
     return jwt.encode(payload, JWT_SECRET, algorithm='HS256')
+
+def generate_access_token(user_id):
+    """Generate a JWT access token for the user (6 hours)"""
+    from datetime import timezone
+    expiration = datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+
+    payload = {
+        'user_id': user_id,
+        'exp': expiration,
+        'type': 'access'
+    }
+
+    # Encode JWT token
+    return jwt.encode(payload, JWT_SECRET, algorithm='HS256')
+
+def generate_refresh_token(user_id, cursor):
+    """Generate a UUID refresh token and save to database (7 days)"""
+    import uuid
+    from datetime import timezone
+
+    refresh_token = str(uuid.uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+
+    cursor.execute("""
+        INSERT INTO refresh_tokens (user_id, refresh_token, expires_at)
+        VALUES (%s, %s, %s)
+    """, (user_id, refresh_token, expires_at))
+
+    return refresh_token
+
+def verify_refresh_token(refresh_token, cursor):
+    """Verify refresh token and return user_id if valid"""
+    from datetime import timezone
+
+    cursor.execute("""
+        SELECT user_id, expires_at, revoked
+        FROM refresh_tokens
+        WHERE refresh_token = %s
+    """, (refresh_token,))
+
+    result = cursor.fetchone()
+    if not result:
+        return None
+
+    user_id, expires_at, revoked = result
+
+    # Check if revoked or expired
+    if revoked or datetime.now(timezone.utc) > expires_at:
+        return None
+
+    return user_id
 
 def verify_token(token):
     """Verify a JWT token and return the user ID if valid"""
@@ -1719,8 +1778,10 @@ async def register(user_data: UserCreate, request: Request):
         # Get the new user ID
         user_id = cursor.lastrowid
 
-        # Generate token for auto-login
-        token = generate_token(user_id)
+        # Generate access token and refresh token for auto-login
+        access_token = generate_access_token(user_id)
+        refresh_token = generate_refresh_token(user_id, cursor)
+        connection.commit()
 
         cursor.close()
         connection.close()
@@ -1730,7 +1791,8 @@ async def register(user_data: UserCreate, request: Request):
         return {
             "status": "success",
             "message": "Conta criada com sucesso!",
-            "token": token,
+            "token": access_token,
+            "refresh_token": refresh_token,
             "user": {
                 "user_id": user_id,
                 "username": user_data.username,
@@ -1934,25 +1996,28 @@ async def login(login_data: UserLogin, request: Request):
             (datetime.now(), user['user_id'])
         )
         connection.commit()
-        
-        cursor.close()
-        connection.close()
-        
+
         # Remove password hash from user object
         user.pop('password_hash', None)
-        
+
         # Convert datetime objects to strings
         for key, value in user.items():
             if isinstance(value, datetime):
                 user[key] = value.strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Generate token
-        token = generate_token(user['user_id'])
-        
+
+        # Generate access token and refresh token
+        access_token = generate_access_token(user['user_id'])
+        refresh_token = generate_refresh_token(user['user_id'], cursor)
+        connection.commit()
+
+        cursor.close()
+        connection.close()
+
         return {
             "status": "success",
             "message": "Login successful",
-            "token": token,
+            "token": access_token,
+            "refresh_token": refresh_token,
             "user": user
         }
         
@@ -1960,6 +2025,93 @@ async def login(login_data: UserLogin, request: Request):
         raise e
     except Exception as e:
         logger.error(f"Login error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/auth/refresh", response_model=TokenData)
+@limiter.limit("60/hour")  # Rate limit refresh to prevent abuse
+async def refresh_access_token(refresh_data: RefreshRequest, request: Request):
+    """Generate new access token using refresh token"""
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        # Verify refresh token
+        user_id = verify_refresh_token(refresh_data.refresh_token, cursor)
+
+        if not user_id:
+            cursor.close()
+            connection.close()
+            raise HTTPException(status_code=401, detail="Refresh token inválido ou expirado")
+
+        # Get user data
+        cursor.execute(
+            """
+            SELECT user_id, username, email, phone_number, profile_image_url,
+                   registration_date, account_status, verification_status
+            FROM users
+            WHERE user_id = %s AND account_status = 'active'
+            """,
+            (user_id,)
+        )
+
+        user = cursor.fetchone()
+
+        if not user:
+            cursor.close()
+            connection.close()
+            raise HTTPException(status_code=401, detail="Usuário não encontrado")
+
+        cursor.close()
+        connection.close()
+
+        # Convert datetime objects to strings
+        for key, value in user.items():
+            if isinstance(value, datetime):
+                user[key] = value.strftime('%Y-%m-%d %H:%M:%S')
+
+        # Generate new access token
+        new_access_token = generate_access_token(user_id)
+
+        return {
+            "token": new_access_token,
+            "user": user
+        }
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Refresh token error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/auth/logout", response_model=dict)
+async def logout(logout_data: LogoutRequest, request: Request, current_user_id: int = Depends(get_user_from_token)):
+    """Revoke refresh token on logout"""
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+
+        # Revoke refresh token
+        from datetime import timezone
+        cursor.execute(
+            """
+            UPDATE refresh_tokens
+            SET revoked = TRUE, revoked_at = %s
+            WHERE refresh_token = %s AND user_id = %s
+            """,
+            (datetime.now(timezone.utc), logout_data.refresh_token, current_user_id)
+        )
+
+        connection.commit()
+        cursor.close()
+        connection.close()
+
+        return {
+            "status": "success",
+            "message": "Logout realizado com sucesso"
+        }
+
+    except Exception as e:
+        logger.error(f"Logout error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/auth/send-otp", response_model=dict)
@@ -4268,6 +4420,43 @@ async def custom_404_handler(request: requests, exc: HTTPException):
             "Visit": "www.duraeco.com.br"
         }
     )
+
+# ============== Background Jobs ==============
+
+def cleanup_expired_tokens():
+    """Remove expired and revoked refresh tokens from database (runs daily at 3 AM)"""
+    try:
+        connection = get_db_connection()
+        if not connection:
+            logger.error("Failed to get database connection for token cleanup")
+            return
+
+        cursor = connection.cursor()
+
+        cursor.execute("""
+            DELETE FROM refresh_tokens
+            WHERE expires_at < NOW() OR revoked = TRUE
+        """)
+        connection.commit()
+        deleted = cursor.rowcount
+
+        cursor.close()
+        connection.close()
+
+        if ENVIRONMENT != "production":
+            logger.info(f"[Cleanup] Removed {deleted} expired/revoked refresh tokens")
+
+    except Exception as e:
+        logger.error(f"Token cleanup error: {e}")
+
+# Schedule daily token cleanup
+from apscheduler.schedulers.background import BackgroundScheduler
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(cleanup_expired_tokens, 'cron', hour=3, minute=0)
+scheduler.start()
+
+logger.info("[Scheduler] Token cleanup job scheduled for 3:00 AM daily")
 
 # Run the app
 if __name__ == "__main__":

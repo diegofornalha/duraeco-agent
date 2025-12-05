@@ -36,6 +36,42 @@
 - ✅ Removida necessidade de `API_SECRET_KEY`
 - ✅ Código mais limpo (~20 linhas removidas)
 
+#### Sistema de Refresh Token
+**Prioridade:** Alta
+**Status:** ✅ **CONCLUÍDO** (2025-12-05)
+
+**Problema resolvido:**
+- ~~Access tokens com 24h de duração (janela de ataque longa se vazados)~~
+- ~~Sem renovação automática de tokens~~
+- ~~Usuários precisavam fazer login novamente a cada 24h~~
+
+**Solução implementada:**
+- **Database:**
+  - Tabela `refresh_tokens` criada com suporte a revogação
+  - Background job de limpeza diária (3 AM)
+
+- **Backend** (`backend-ai/app.py`):
+  - Access tokens: 6 horas (redução de 24h → 6h)
+  - Refresh tokens: 7 dias (UUID v4)
+  - Funções: `generate_access_token()`, `generate_refresh_token()`, `verify_refresh_token()`
+  - Endpoints: `POST /api/auth/refresh`, `POST /api/auth/logout`
+  - Login e Register retornam `refresh_token`
+  - Rate limiting: 60/hour no refresh endpoint
+  - Scheduler (apscheduler) para limpeza automática
+
+- **Frontend** (`duraeco-web/`):
+  - AuthService: Auto-refresh 5 minutos antes de expirar
+  - localStorage gerencia `refresh_token`
+  - authInterceptor: Retry automático em 401
+  - logout() revoga tokens no backend
+
+**Benefícios alcançados:**
+- ✅ Segurança melhorada (access token de 6h vs 24h)
+- ✅ UX melhorada (renovação automática transparente)
+- ✅ Logout efetivo (revogação de tokens no banco)
+- ✅ Migração suave (backward-compatible)
+- ✅ Limpeza automática de tokens expirados
+
 ---
 
 ### 🎯 Backend
