@@ -1,4 +1,4 @@
-import { Component, inject, ChangeDetectionStrategy, signal, afterNextRender } from '@angular/core';
+import { Component, inject, ChangeDetectionStrategy, signal, afterNextRender, effect } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../../core/services/auth.service';
@@ -347,6 +347,13 @@ export class Reports {
         },
         error: (err) => console.error('Error loading reports:', err)
       });
+    });
+
+    // Obter localização automaticamente quando o modal abrir
+    effect(() => {
+      if (this.showNewReport()) {
+        this.getCurrentLocation();
+      }
     });
   }
 
