@@ -278,9 +278,7 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
   readonly suggestions = [
     'Quantos relatórios existem no sistema?',
     'Quais são os hotspots ativos?',
-    'Mostre um gráfico dos tipos de resíduos',
-    'Buscar relatórios similares ao #1',
-    'Buscar relatórios perto de -8.556, 125.560'
+    'Mostre um gráfico dos tipos de resíduos'
   ];
 
   // Helper para template (para usar Array.from)
