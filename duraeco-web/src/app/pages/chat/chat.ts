@@ -1,7 +1,7 @@
-import { Component, inject, signal, ChangeDetectionStrategy, ViewChild, ElementRef, AfterViewChecked } from '@angular/core';
+import { Component, inject, signal, ChangeDetectionStrategy, ViewChild, ElementRef, AfterViewChecked, OnInit, OnDestroy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import { ChatService, ChatMessage } from '../../core/services/chat.service';
+import { WebSocketChatService, ChatMessage } from '../../core/services/websocket-chat.service';
 import { AuthService } from '../../core/services/auth.service';
 import { environment } from '../../../environments/environment';
 
@@ -21,8 +21,15 @@ import { environment } from '../../../environments/environment';
               </svg>
             </a>
             <div>
-              <h1 class="text-xl font-bold">Assistente DuraEco</h1>
-              <p class="text-emerald-100 text-sm">Powered by Amazon Nova Pro</p>
+              <h1 class="text-xl font-bold flex items-center gap-2">
+                Assistente DuraEco
+                @if (chatService.isConnected()) {
+                  <span class="w-2 h-2 bg-green-400 rounded-full" title="Conectado"></span>
+                } @else {
+                  <span class="w-2 h-2 bg-red-400 rounded-full animate-pulse" title="Desconectado"></span>
+                }
+              </h1>
+              <p class="text-emerald-100 text-sm">Claude Agent SDK + RAG (Busca Vetorial)</p>
             </div>
           </div>
           <button
@@ -34,11 +41,48 @@ import { environment } from '../../../environments/environment';
         </div>
       </header>
 
+      <!-- Tool Indicators Panel -->
+      @if (chatService.activeTools().size > 0) {
+        <div class="bg-blue-50 border-b border-blue-200 p-3">
+          <div class="max-w-4xl mx-auto">
+            <div class="flex items-center gap-2 text-sm text-blue-700 font-medium mb-2">
+              <svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+              Ferramentas em execução:
+            </div>
+            <div class="flex flex-wrap gap-2">
+              @for (tool of Array.from(chatService.activeTools().values()); track tool.tool_use_id) {
+                <div class="inline-flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border"
+                     [class.border-blue-300]="tool.status === 'running'"
+                     [class.border-green-300]="tool.status === 'done'"
+                     [class.border-red-300]="tool.status === 'error'">
+                  @if (tool.status === 'running') {
+                    <div class="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                  } @else if (tool.status === 'done') {
+                    <svg class="w-3 h-3 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                  } @else {
+                    <svg class="w-3 h-3 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                  }
+                  <span class="text-xs">
+                    {{ chatService.getToolIcon(tool.tool) }} {{ chatService.getToolDisplayName(tool.tool) }}
+                  </span>
+                </div>
+              }
+            </div>
+          </div>
+        </div>
+      }
+
 
       <!-- Messages -->
       <div class="flex-1 overflow-y-auto p-4" #messagesContainer>
         <div class="max-w-4xl mx-auto space-y-4">
-          @if (chatService.allMessages().length === 0) {
+          @if (chatService.messages().length === 0) {
             <div class="text-center py-12">
               <div class="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <svg class="w-10 h-10 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -61,7 +105,7 @@ import { environment } from '../../../environments/environment';
             </div>
           }
 
-          @for (message of chatService.allMessages(); track $index) {
+          @for (message of chatService.messages(); track $index) {
             <div [class]="message.role === 'user' ? 'flex justify-end' : 'flex justify-start'">
               <div [class]="message.role === 'user'
                 ? 'bg-emerald-600 text-white rounded-2xl rounded-br-md px-4 py-3 max-w-[80%]'
@@ -90,7 +134,7 @@ import { environment } from '../../../environments/environment';
             </div>
           }
 
-          @if (chatService.isLoading()) {
+          @if (chatService.isTyping()) {
             <div class="flex justify-start">
               <div class="bg-white border border-gray-200 rounded-2xl rounded-bl-md px-4 py-3 shadow-sm">
                 <div class="flex items-center gap-2">
@@ -110,16 +154,16 @@ import { environment } from '../../../environments/environment';
       <!-- Input -->
       <div class="border-t bg-white p-4">
         <div class="max-w-4xl mx-auto">
-          @if (error()) {
+          @if (chatService.error()) {
             <div class="mb-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-start gap-2">
               <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
               </svg>
               <div class="flex-1">
-                <p class="font-medium">Erro ao enviar mensagem</p>
-                <p class="text-sm">{{ error() }}</p>
+                <p class="font-medium">Erro</p>
+                <p class="text-sm">{{ chatService.error() }}</p>
               </div>
-              <button (click)="error.set(null)" class="text-red-500 hover:text-red-700">
+              <button (click)="chatService.error.set(null)" class="text-red-500 hover:text-red-700">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                 </svg>
@@ -132,12 +176,12 @@ import { environment } from '../../../environments/environment';
               [(ngModel)]="messageInput"
               name="message"
               placeholder="Digite sua mensagem..."
-              [disabled]="chatService.isLoading()"
+              [disabled]="chatService.isTyping() || !chatService.isConnected()"
               class="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
             <button
               type="submit"
-              [disabled]="!messageInput.trim() || chatService.isLoading()"
+              [disabled]="!messageInput.trim() || chatService.isTyping() || !chatService.isConnected()"
               class="bg-emerald-600 text-white px-6 py-3 rounded-xl font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -150,21 +194,34 @@ import { environment } from '../../../environments/environment';
     </div>
   `
 })
-export class Chat implements AfterViewChecked {
-  readonly chatService = inject(ChatService);
+export class Chat implements OnInit, OnDestroy, AfterViewChecked {
+  readonly chatService = inject(WebSocketChatService);
   readonly authService = inject(AuthService);
 
   @ViewChild('messagesContainer') private messagesContainer!: ElementRef;
 
   messageInput = '';
-  readonly error = signal<string | null>(null);
 
   readonly suggestions = [
     'Quantos relatórios existem no sistema?',
     'Quais são os hotspots ativos?',
     'Mostre um gráfico dos tipos de resíduos',
-    'O que é o DuraEco?'
+    'Buscar relatórios similares ao #1',
+    'Buscar relatórios perto de -8.556, 125.560'
   ];
+
+  // Helper para template (para usar Array.from)
+  readonly Array = Array;
+
+  ngOnInit(): void {
+    // Conectar ao WebSocket quando componente inicializar
+    this.chatService.connect();
+  }
+
+  ngOnDestroy(): void {
+    // Desconectar ao destruir componente
+    this.chatService.disconnect();
+  }
 
   ngAfterViewChecked(): void {
     this.scrollToBottom();
@@ -183,14 +240,9 @@ export class Chat implements AfterViewChecked {
 
     const message = this.messageInput.trim();
     this.messageInput = '';
-    this.error.set(null);
 
-    this.chatService.sendMessage(message).subscribe({
-      error: (err) => {
-        const errorMsg = err.error?.detail || 'Erro ao enviar mensagem';
-        this.error.set(errorMsg);
-      }
-    });
+    // WebSocket service já gerencia o envio e os estados
+    this.chatService.sendMessage(message);
   }
 
   sendSuggestion(suggestion: string): void {

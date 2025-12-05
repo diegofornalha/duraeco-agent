@@ -34,6 +34,9 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 # from fastapi_mcp import FastApiMCP  # Apenas necessário para MCP server
 
+# Importar router do novo sistema de chat (Claude Agent SDK + RAG)
+from routes.chat_routes import router as chat_router
+
 # Load environment variables
 load_dotenv(override=True)
 print("DB Name:", os.getenv('DB_NAME'))
@@ -1680,6 +1683,9 @@ async def health_check():
             "service": "duraeco API",
             "version": "1.0.0"
         }
+
+# Include chat router (Claude Agent SDK + RAG - novo sistema)
+app.include_router(chat_router)
 
 # Authentication routes
 @app.get("/api/auth/check-existing", response_model=dict)
@@ -3873,10 +3879,21 @@ def execute_sql_query(sql_query: str) -> dict:
             "query_attempted": sql_query
         }
 
-@app.post("/api/chat")
+@app.post("/api/chat", deprecated=True)
 @limiter.limit("30/minute")  # Rate limit: 30 requests per minute per IP
 async def chat_with_agentcore(chat_request: ChatRequest, request: Request, user_id: int = Depends(get_user_from_token)):
-    """Chat endpoint using AgentCore with database tools - Requires JWT"""
+    """
+    DEPRECATED: Use WebSocket endpoint /api/chat/ws instead
+
+    This endpoint uses Bedrock AgentCore and will be removed in future versions.
+    The new WebSocket endpoint offers:
+    - Real-time streaming responses
+    - RAG (Retrieval Augmented Generation) with vector embeddings
+    - Better performance with connection pooling
+    - Tool execution indicators
+
+    Legacy chat endpoint using AgentCore with database tools - Requires JWT
+    """
     try:
         # Generate session ID if not provided
         session_id = chat_request.session_id or f"chat_{datetime.now().timestamp()}"
