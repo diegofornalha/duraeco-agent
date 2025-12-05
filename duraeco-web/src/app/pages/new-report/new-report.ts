@@ -1,4 +1,4 @@
-import { Component, inject, signal, ChangeDetectionStrategy } from '@angular/core';
+import { Component, inject, signal, ChangeDetectionStrategy, OnInit } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
@@ -170,7 +170,7 @@ import { ReportsService } from '../../core/services/reports.service';
     </div>
   `
 })
-export class NewReport {
+export class NewReport implements OnInit {
   readonly authService = inject(AuthService);
   readonly reportsService = inject(ReportsService);
   private readonly router = inject(Router);
@@ -187,6 +187,11 @@ export class NewReport {
     longitude: [0, [Validators.required, Validators.min(-180), Validators.max(180)]],
     description: ['', [Validators.required, Validators.minLength(10)]]
   });
+
+  ngOnInit(): void {
+    // Obter localização automaticamente ao abrir a página
+    this.getCurrentLocation();
+  }
 
   getCurrentLocation(): void {
     if (!navigator.geolocation) {
