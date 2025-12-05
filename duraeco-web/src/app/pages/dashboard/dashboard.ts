@@ -14,7 +14,14 @@ import { ReportsService } from '../../core/services/reports.service';
         <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <h1 class="text-2xl font-bold text-emerald-600">DuraEco</h1>
           <div class="flex items-center gap-4">
-            <span class="text-gray-600">{{ authService.user()?.name }}</span>
+            <a routerLink="/profile" class="flex items-center gap-2 text-gray-600 hover:text-emerald-600 transition">
+              <div class="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
+                <span class="text-sm font-semibold text-emerald-600">
+                  {{ getInitials() }}
+                </span>
+              </div>
+              <span>{{ authService.user()?.username }}</span>
+            </a>
             <button
               (click)="authService.logout()"
               class="text-gray-500 hover:text-red-600 transition"
@@ -28,24 +35,36 @@ import { ReportsService } from '../../core/services/reports.service';
       <!-- Navigation -->
       <nav class="bg-white border-b">
         <div class="max-w-7xl mx-auto px-4">
-          <div class="flex gap-6">
+          <div class="flex gap-6 overflow-x-auto">
             <a
               routerLink="/dashboard"
-              class="py-4 border-b-2 border-emerald-600 text-emerald-600 font-medium"
+              class="py-4 border-b-2 border-emerald-600 text-emerald-600 font-medium whitespace-nowrap"
             >
               Dashboard
             </a>
             <a
               routerLink="/reports"
-              class="py-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition"
+              class="py-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition whitespace-nowrap"
             >
               Relatórios
             </a>
             <a
               routerLink="/hotspots"
-              class="py-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition"
+              class="py-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition whitespace-nowrap"
             >
               Hotspots
+            </a>
+            <a
+              routerLink="/map"
+              class="py-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition whitespace-nowrap"
+            >
+              Mapa
+            </a>
+            <a
+              routerLink="/chat"
+              class="py-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition whitespace-nowrap"
+            >
+              Chat IA
             </a>
           </div>
         </div>
@@ -189,5 +208,10 @@ export class Dashboard implements OnInit {
       hour: '2-digit',
       minute: '2-digit'
     });
+  }
+
+  getInitials(): string {
+    const username = this.authService.user()?.username || '';
+    return username.substring(0, 2).toUpperCase();
   }
 }

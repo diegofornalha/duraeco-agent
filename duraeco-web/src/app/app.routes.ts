@@ -28,8 +28,33 @@ export const routes: Routes = [
     canActivate: [authGuard]
   },
   {
+    path: 'reports/new',
+    loadComponent: () => import('./pages/new-report/new-report').then(m => m.NewReport),
+    canActivate: [authGuard]
+  },
+  {
+    path: 'reports/:id',
+    loadComponent: () => import('./pages/report-detail/report-detail').then(m => m.ReportDetail),
+    canActivate: [authGuard]
+  },
+  {
     path: 'hotspots',
     loadComponent: () => import('./pages/hotspots/hotspots').then(m => m.Hotspots),
+    canActivate: [authGuard]
+  },
+  {
+    path: 'map',
+    loadComponent: () => import('./pages/map/map').then(m => m.MapPage),
+    canActivate: [authGuard]
+  },
+  {
+    path: 'chat',
+    loadComponent: () => import('./pages/chat/chat').then(m => m.Chat),
+    canActivate: [authGuard]
+  },
+  {
+    path: 'profile',
+    loadComponent: () => import('./pages/profile/profile').then(m => m.Profile),
     canActivate: [authGuard]
   },
   {
