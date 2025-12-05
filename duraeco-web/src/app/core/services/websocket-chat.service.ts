@@ -34,7 +34,16 @@ export interface ToolEvent {
 
 export interface WebSocketMessage {
   type: 'user_message_saved' | 'text_chunk' | 'thinking' | 'tool_start' | 'tool_result' | 'result' | 'error';
-  [key: string]: any;
+  conversation_id?: string;
+  content?: string;
+  tool?: string;
+  tool_use_id?: string;
+  input?: Record<string, unknown>;
+  is_error?: boolean;
+  cost?: number;
+  duration_ms?: number;
+  num_turns?: number;
+  error?: string;
 }
 
 @Injectable({
@@ -154,63 +163,69 @@ export class WebSocketChatService {
 
     switch (data.type) {
       case 'user_message_saved':
-        this.conversationId.set(data.conversation_id);
+        this.conversationId.set(data.conversation_id ?? null);
         this.isTyping.set(true);
         this.error.set(null);
         break;
 
-      case 'text_chunk':
+      case 'text_chunk': {
         // Append to last assistant message or create new
+        const content = data.content ?? '';
         const msgs = this.messages();
         const lastMsg = msgs[msgs.length - 1];
 
         if (lastMsg && lastMsg.role === 'assistant') {
-          // Atualizar última mensagem
-          lastMsg.content += data.content;
+          // Atualizar ultima mensagem
+          lastMsg.content += content;
           this.messages.set([...msgs]);
         } else {
           // Criar nova mensagem do assistente
           this.messages.update(m => [...m, {
-            role: 'assistant',
-            content: data.content,
+            role: 'assistant' as const,
+            content: content,
             timestamp: new Date()
           }]);
         }
         break;
+      }
 
       case 'thinking':
         // Optionally show in debug panel
-        this.thinkingContent.update(t => t + data.content);
+        this.thinkingContent.update(t => t + (data.content ?? ''));
         console.log('[WebSocketChat] Thinking:', data.content);
         break;
 
-      case 'tool_start':
+      case 'tool_start': {
+        const toolUseId = data.tool_use_id ?? '';
+        const toolName = data.tool ?? 'unknown';
         this.activeTools.update(tools => {
           const newTools = new Map(tools);
-          newTools.set(data.tool_use_id, {
-            tool: data.tool,
-            tool_use_id: data.tool_use_id,
+          newTools.set(toolUseId, {
+            tool: toolName,
+            tool_use_id: toolUseId,
             status: 'running',
             input: data.input
           });
           return newTools;
         });
         break;
+      }
 
-      case 'tool_result':
+      case 'tool_result': {
+        const toolUseId = data.tool_use_id ?? '';
         this.activeTools.update(tools => {
           const newTools = new Map(tools);
-          const tool = newTools.get(data.tool_use_id);
+          const tool = newTools.get(toolUseId);
           if (tool) {
             tool.status = data.is_error ? 'error' : 'done';
             tool.content = data.content;
-            newTools.set(data.tool_use_id, tool);
+            newTools.set(toolUseId, tool);
 
             // Auto-remove after 3s
             setTimeout(() => {
               this.activeTools.update(t => {
                 const updated = new Map(t);
-                updated.delete(data.tool_use_id);
+                updated.delete(toolUseId);
                 return updated;
               });
             }, 3000);
@@ -218,6 +233,7 @@ export class WebSocketChatService {
           return newTools;
         });
         break;
+      }
 
       case 'result':
         this.isTyping.set(false);

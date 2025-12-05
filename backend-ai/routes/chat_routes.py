@@ -58,14 +58,9 @@ async def websocket_chat(
     """
 
     # Autenticar JWT
-    try:
-        payload = verify_token(token)
-        user_id = payload.get("user_id")
-        if not user_id:
-            await websocket.close(code=4001, reason="Unauthorized")
-            return
-    except Exception as e:
-        logger.error(f"Authentication failed: {e}")
+    user_id = verify_token(token)  # Retorna user_id diretamente (int ou None)
+    if not user_id:
+        logger.error("Authentication failed: Invalid or expired token")
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
