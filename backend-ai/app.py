@@ -733,13 +733,18 @@ def upload_image_to_s3(image_data, filename):
     Save base64 encoded image to local storage (substitui S3)
 
     Args:
-        image_data: Base64 encoded image data
+        image_data: Base64 encoded image data (pode incluir prefixo data:image/...)
         filename: Filename to use
 
     Returns:
         Local URL if successful, None otherwise
     """
     try:
+        # Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+        if image_data.startswith('data:'):
+            # Split on comma and take the base64 part
+            image_data = image_data.split(',', 1)[1]
+
         # Decode the base64 data
         image_binary = base64.b64decode(image_data)
 
@@ -985,13 +990,12 @@ async def process_report_with_agent_async(report_id, image_url, latitude, longit
         return None, None
 
 
-async def analyze_image_with_bedrock(image_url, latitude=0.0, longitude=0.0, description=""):
+async def analyze_image_with_claude(image_url, latitude=0.0, longitude=0.0, description=""):
     """
-    Analyze a waste image using Claude Opus 4.5 Vision
-    Wrapper function that maintains backwards compatibility
+    Analyze a waste image using Claude Code CLI
 
     Args:
-        image_url: URL to the image
+        image_url: Path to the image (local path starting with /static/)
         latitude: Latitude coordinate
         longitude: Longitude coordinate
         description: User-provided description
@@ -1000,46 +1004,74 @@ async def analyze_image_with_bedrock(image_url, latitude=0.0, longitude=0.0, des
         Tuple of (analysis_result dict, image_data base64 string)
     """
     try:
-        logger.info(f"Analyzing image with Claude Vision from: {image_url}")
+        logger.info(f"Analyzing image with Claude Code CLI: {image_url}")
 
-        # Download the image
+        # Convert relative path to absolute local path
+        if image_url.startswith('/static/'):
+            # Get absolute path from relative /static/ path
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            local_path = os.path.join(base_dir, image_url.lstrip('/'))
+        else:
+            local_path = image_url
+
+        if not os.path.exists(local_path):
+            logger.error(f"Image file not found: {local_path}")
+            return None, None
+
+        logger.info(f"Reading local image: {local_path}")
+
+        # Read image and convert to base64
+        with open(local_path, 'rb') as f:
+            image_data = base64.b64encode(f.read()).decode('utf-8')
+
+        logger.info(f"Image loaded, size: {len(image_data)} chars base64")
+
+        # Import and call the vision tool
+        from tools.vision_tools import analyze_waste_image_direct
+
+        # Run analysis in thread pool to avoid blocking
         import concurrent.futures
         loop = asyncio.get_event_loop()
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            response = await loop.run_in_executor(executor, requests.get, image_url)
-
-        if response.status_code != 200:
-            logger.error(f"Failed to download image from {image_url}: {response.status_code}")
-            return None, None
-
-        # Convert image to base64
-        image_data = base64.b64encode(response.content).decode('utf-8')
-        logger.info(f"Converted image to base64 format (length: {len(image_data)} chars)")
-
-        # Call analyze_waste_image for analysis
-        agent_payload = {
-            "image_url": image_url,
-            "image_base64": image_data,
-            "location": {"lat": latitude, "lng": longitude},
-            "description": description
-        }
-
-        # Run in thread pool to avoid blocking
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            agent_result = await loop.run_in_executor(
-                executor, analyze_waste_image, agent_payload
+            result = await loop.run_in_executor(
+                executor,
+                analyze_waste_image_direct,
+                "",  # image_base64 (empty, using path)
+                local_path,  # image_path
+                latitude,
+                longitude,
+                description
             )
 
-        if agent_result:
-            logger.info(f"Image analysis completed successfully")
-            return agent_result, image_data
+        if result and not result.get('error'):
+            # Convert to expected format
+            analysis_result = {
+                "waste_type": result.get("waste_type", "Unknown"),
+                "severity_score": result.get("severity_score", 5),
+                "priority_level": result.get("priority_level", "medium").lower(),
+                "environmental_impact": result.get("environmental_impact", ""),
+                "estimated_volume": result.get("volume_estimate", "Unknown"),
+                "safety_concerns": result.get("recommended_action", ""),
+                "analysis_notes": result.get("description", ""),
+                "waste_detection_confidence": int(result.get("confidence", 0.8) * 100),
+                "short_description": f"{result.get('waste_type', 'Waste')} detected",
+                "full_description": result.get("description", "")
+            }
+            logger.info(f"Analysis complete: {analysis_result.get('waste_type')}")
+            return analysis_result, image_data
         else:
-            logger.error("Image analysis returned no result")
+            logger.error(f"Analysis failed: {result.get('error', 'Unknown error')}")
             return None, None
 
     except Exception as e:
-        logger.error(f"Error in analyze_image_with_bedrock: {e}")
+        logger.error(f"Error in analyze_image_with_claude: {e}")
         return None, None
+
+
+# Alias for backwards compatibility
+async def analyze_image_with_bedrock(image_url, latitude=0.0, longitude=0.0, description=""):
+    """Backwards compatibility wrapper - calls analyze_image_with_claude"""
+    return await analyze_image_with_claude(image_url, latitude, longitude, description)
 
 
 # NOTA: A implementação antiga usando Amazon Bedrock/Nova foi removida
