@@ -32,7 +32,7 @@ from bedrock_agentcore import BedrockAgentCoreApp
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from fastapi_mcp import FastApiMCP
+# from fastapi_mcp import FastApiMCP  # Apenas necessário para MCP server
 
 # Load environment variables
 load_dotenv(override=True)
@@ -72,13 +72,14 @@ app.add_middleware(
 # All charts are saved to S3 - no local static directory needed
 
 # Initialize MCP Server - exposes API endpoints as MCP tools
-mcp = FastApiMCP(
-    app,
-    name="duraeco-api",
-    description="DuraEco - Sistema de monitoramento de resíduos com IA para o Brasil"
-)
-mcp.mount()
-logger.info("MCP Server mounted at /mcp")
+# Comentado: MCP é inicializado em mcp_server.py separadamente
+# mcp = FastApiMCP(
+#     app,
+#     name="duraeco-api",
+#     description="DuraEco - Sistema de monitoramento de resíduos com IA para o Brasil"
+# )
+# mcp.mount()
+# logger.info("MCP Server mounted at /mcp")
 
 # Amazon Bedrock AgentCore Configuration
 agentcore_app = BedrockAgentCoreApp()
@@ -2405,6 +2406,85 @@ async def submit_report(report_data: ReportCreate, background_tasks: BackgroundT
         logger.error(f"Error in submit_report: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/reports/nearby", response_model=dict)
+async def get_nearby_reports(
+    lat: float,
+    lon: float,
+    radius: float = 5.0,
+    page: int = 1,
+    per_page: int = 10,
+    user_id: int = Depends(get_user_from_token)
+):
+    try:
+        # Calculate offset for pagination
+        offset = (page - 1) * per_page
+        
+        # Get nearby reports
+        connection = get_db_connection()
+        cursor = connection.cursor(dictionary=True)
+        
+        # Get total count using Haversine formula
+        count_query = """
+            SELECT COUNT(*) as count
+            FROM reports r
+            WHERE (
+                6371 * acos(
+                    cos(radians(%s)) * cos(radians(latitude)) * 
+                    cos(radians(longitude) - radians(%s)) + 
+                    sin(radians(%s)) * sin(radians(latitude))
+                )
+            ) < %s
+        """
+        
+        cursor.execute(count_query, (lat, lon, lat, radius))
+        count_result = cursor.fetchone()
+        total_reports = count_result['count'] if count_result else 0
+        
+        # Get reports with pagination
+        report_query = """
+            SELECT r.*, a.severity_score, a.priority_level, w.name as waste_type,
+                   (
+                       6371 * acos(
+                           cos(radians(%s)) * cos(radians(latitude)) * 
+                           cos(radians(longitude) - radians(%s)) + 
+                           sin(radians(%s)) * sin(radians(latitude))
+                       )
+                   ) as distance
+            FROM reports r
+            LEFT JOIN analysis_results a ON r.report_id = a.report_id
+            LEFT JOIN waste_types w ON a.waste_type_id = w.waste_type_id
+            HAVING distance < %s
+            ORDER BY distance
+            LIMIT %s OFFSET %s
+        """
+        
+        cursor.execute(report_query, (lat, lon, lat, radius, per_page, offset))
+        reports = cursor.fetchall()
+        cursor.close()
+        connection.close()
+        
+        # Convert datetime objects to strings
+        for report in reports:
+            if 'report_date' in report and report['report_date']:
+                report['report_date'] = report['report_date'].strftime('%Y-%m-%d %H:%M:%S')
+        
+        return {
+            "status": "success",
+            "reports": reports,
+            "pagination": {
+                "total": total_reports,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": (total_reports + per_page - 1) // per_page
+            }
+        }
+        
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Get nearby reports error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/reports/{report_id}", response_model=dict)
 async def get_report(report_id: int, user_id: int = Depends(get_user_from_token)):
     try:
@@ -2660,85 +2740,6 @@ async def get_reports(
         raise e
     except Exception as e:
         logger.error(f"Get reports error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/reports/nearby", response_model=dict)
-async def get_nearby_reports(
-    lat: float,
-    lon: float,
-    radius: float = 5.0,
-    page: int = 1,
-    per_page: int = 10,
-    user_id: int = Depends(get_user_from_token)
-):
-    try:
-        # Calculate offset for pagination
-        offset = (page - 1) * per_page
-        
-        # Get nearby reports
-        connection = get_db_connection()
-        cursor = connection.cursor(dictionary=True)
-        
-        # Get total count using Haversine formula
-        count_query = """
-            SELECT COUNT(*) as count
-            FROM reports r
-            WHERE (
-                6371 * acos(
-                    cos(radians(%s)) * cos(radians(latitude)) * 
-                    cos(radians(longitude) - radians(%s)) + 
-                    sin(radians(%s)) * sin(radians(latitude))
-                )
-            ) < %s
-        """
-        
-        cursor.execute(count_query, (lat, lon, lat, radius))
-        count_result = cursor.fetchone()
-        total_reports = count_result['count'] if count_result else 0
-        
-        # Get reports with pagination
-        report_query = """
-            SELECT r.*, a.severity_score, a.priority_level, w.name as waste_type,
-                   (
-                       6371 * acos(
-                           cos(radians(%s)) * cos(radians(latitude)) * 
-                           cos(radians(longitude) - radians(%s)) + 
-                           sin(radians(%s)) * sin(radians(latitude))
-                       )
-                   ) as distance
-            FROM reports r
-            LEFT JOIN analysis_results a ON r.report_id = a.report_id
-            LEFT JOIN waste_types w ON a.waste_type_id = w.waste_type_id
-            HAVING distance < %s
-            ORDER BY distance
-            LIMIT %s OFFSET %s
-        """
-        
-        cursor.execute(report_query, (lat, lon, lat, radius, per_page, offset))
-        reports = cursor.fetchall()
-        cursor.close()
-        connection.close()
-        
-        # Convert datetime objects to strings
-        for report in reports:
-            if 'report_date' in report and report['report_date']:
-                report['report_date'] = report['report_date'].strftime('%Y-%m-%d %H:%M:%S')
-        
-        return {
-            "status": "success",
-            "reports": reports,
-            "pagination": {
-                "total": total_reports,
-                "page": page,
-                "per_page": per_page,
-                "total_pages": (total_reports + per_page - 1) // per_page
-            }
-        }
-        
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"Get nearby reports error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/waste-types", response_model=dict)

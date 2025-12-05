@@ -14,7 +14,7 @@ duraeco/
 └── database/            # Schema MySQL/TiDB (18 tabelas, embeddings vetoriais)
 ```
 
-**Nota:** O aplicativo móvel Flutter (`ecolafaek/`) está em um repositório separado.
+**Nota:** O aplicativo móvel Flutter (`duraeco/`) está em um repositório separado.
 
 **Fluxo Principal de IA:** Consulta do Usuário → Agente de IA (chamadas de ferramentas multi-round) → SQL/Gráficos/Mapas/Scraping → Resposta
 

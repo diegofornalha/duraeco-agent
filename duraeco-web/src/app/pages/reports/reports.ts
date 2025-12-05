@@ -14,7 +14,7 @@ import { ReportsService, Report } from '../../core/services/reports.service';
         <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <h1 class="text-2xl font-bold text-emerald-600">DuraEco</h1>
           <div class="flex items-center gap-4">
-            <span class="text-gray-600">{{ authService.user()?.name }}</span>
+            <span class="text-gray-600">{{ authService.user()?.username }}</span>
             <button
               (click)="authService.logout()"
               class="text-gray-500 hover:text-red-600 transition"

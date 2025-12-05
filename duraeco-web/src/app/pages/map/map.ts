@@ -69,7 +69,7 @@ import { ReportsService, Hotspot, Report } from '../../core/services/reports.ser
                       </div>
                       <div class="mt-2 text-sm text-gray-500 space-y-1">
                         <p>{{ hotspot.total_reports }} relatórios</p>
-                        <p>Severidade média: {{ hotspot.average_severity?.toFixed(1) }}</p>
+                        <p>Severidade média: {{ hotspot.average_severity.toFixed(1) }}</p>
                       </div>
                     </button>
                   } @empty {

@@ -38,7 +38,7 @@ O projeto **DuraEco** está **100% funcional** com:
 
 **Banco de Dados:**
 - ✅ MySQL rodando na porta 3306
-- ✅ Database: `db_ecolafaek`
+- ✅ Database: `db_duraeco`
 - ✅ Usuário de teste criado: `admin_test` (user_id: 1)
 
 **Credenciais de Teste:**
@@ -130,7 +130,7 @@ Token JWT: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ┌──────────────────────────────────────────────┐
 │  MySQL 8.0 (localhost:3306)                  │
 │  ─────────────────────────────────────────── │
-│  • Database: db_ecolafaek                    │
+│  • Database: db_duraeco                    │
 │  • 18 tabelas                                │
 │  • Embeddings VECTOR(1024)                   │
 │  • 1 usuário cadastrado                      │
