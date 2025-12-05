@@ -260,12 +260,18 @@ export class WebSocketChatService {
 
         // Limpar thinking content
         this.thinkingContent.set('');
+
+        // Limpar todas as ferramentas ativas quando a resposta terminar
+        this.activeTools.set(new Map());
         break;
 
       case 'error':
         this.isTyping.set(false);
         this.error.set(data.error || 'Erro desconhecido');
         console.error('[WebSocketChat] Error:', data.error);
+
+        // Limpar ferramentas em caso de erro
+        this.activeTools.set(new Map());
 
         // Remover última mensagem do usuário em caso de erro
         this.messages.update(msgs => {
