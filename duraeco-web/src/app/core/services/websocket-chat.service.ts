@@ -13,8 +13,17 @@
  */
 
 import { Injectable, inject, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
 import { AuthService } from './auth.service';
 import { environment } from '../../../environments/environment';
+
+export interface ChatSession {
+  session_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count?: number;
+}
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -51,6 +60,7 @@ export interface WebSocketMessage {
 })
 export class WebSocketChatService {
   private readonly authService = inject(AuthService);
+  private readonly http = inject(HttpClient);
 
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
@@ -66,6 +76,11 @@ export class WebSocketChatService {
   readonly conversationId = signal<string | null>(null);
   readonly error = signal<string | null>(null);
   readonly thinkingContent = signal<string>(''); // Debug: conteúdo do thinking
+
+  // Histórico de sessões
+  readonly sessions = signal<ChatSession[]>([]);
+  readonly isLoadingSessions = signal(false);
+  readonly showHistory = signal(false);
 
   /**
    * Conectar ao WebSocket do backend
@@ -358,5 +373,119 @@ export class WebSocketChatService {
       'execute_sql_query': 'Consultar banco de dados',
     };
     return names[toolName] || toolName;
+  }
+
+  // ==================== HISTÓRICO DE SESSÕES ====================
+
+  /**
+   * Toggle do painel de histórico
+   */
+  toggleHistory(): void {
+    this.showHistory.update(v => !v);
+    if (this.showHistory() && this.sessions().length === 0) {
+      this.loadSessions();
+    }
+  }
+
+  /**
+   * Carregar lista de sessões do usuário
+   */
+  loadSessions(): void {
+    this.isLoadingSessions.set(true);
+    this.http.get<{ success?: boolean; status?: string; data: ChatSession[] }>(
+      `${environment.apiUrl}/api/chat/sessions`
+    ).subscribe({
+      next: (response) => {
+        if (response.success || response.status === 'success') {
+          this.sessions.set(response.data || []);
+        }
+        this.isLoadingSessions.set(false);
+      },
+      error: (err) => {
+        console.error('[WebSocketChat] Error loading sessions:', err);
+        this.isLoadingSessions.set(false);
+      }
+    });
+  }
+
+  /**
+   * Carregar mensagens de uma sessão específica
+   */
+  loadSession(sessionId: string): void {
+    this.isLoadingSessions.set(true);
+
+    this.http.get<{ success?: boolean; status?: string; data: { session_id: string; title: string; messages: any[] } }>(
+      `${environment.apiUrl}/api/chat/sessions/${sessionId}/messages`
+    ).subscribe({
+      next: (response) => {
+        if (response.success || response.status === 'success') {
+          // Converter mensagens do backend para o formato do frontend
+          const messages: ChatMessage[] = response.data.messages.map(m => ({
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+            timestamp: new Date(m.created_at),
+            imageUrl: m.image_url,
+            mapUrl: m.map_url
+          }));
+
+          this.messages.set(messages);
+          this.conversationId.set(sessionId);
+          this.showHistory.set(false);
+        }
+        this.isLoadingSessions.set(false);
+      },
+      error: (err) => {
+        console.error('[WebSocketChat] Error loading session:', err);
+        this.error.set('Erro ao carregar conversa');
+        this.isLoadingSessions.set(false);
+      }
+    });
+  }
+
+  /**
+   * Apagar uma sessão
+   */
+  deleteSession(sessionId: string): void {
+    this.http.delete<{ success?: boolean; status?: string }>(
+      `${environment.apiUrl}/api/chat/sessions/${sessionId}`
+    ).subscribe({
+      next: (response) => {
+        if (response.success || response.status === 'success') {
+          // Remover da lista local
+          this.sessions.update(sessions =>
+            sessions.filter(s => s.session_id !== sessionId)
+          );
+
+          // Se era a sessão atual, limpar chat
+          if (this.conversationId() === sessionId) {
+            this.clearChat();
+          }
+        }
+      },
+      error: (err) => {
+        console.error('[WebSocketChat] Error deleting session:', err);
+        this.error.set('Erro ao apagar conversa');
+      }
+    });
+  }
+
+  /**
+   * Formatar data relativa (hoje, ontem, etc)
+   */
+  formatRelativeDate(dateStr: string): string {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) {
+      return `Hoje ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+    } else if (diffDays === 1) {
+      return 'Ontem';
+    } else if (diffDays < 7) {
+      return `${diffDays} dias atrás`;
+    } else {
+      return date.toLocaleDateString('pt-BR');
+    }
   }
 }

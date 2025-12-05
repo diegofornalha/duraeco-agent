@@ -161,13 +161,14 @@ export class ReportsService {
   }
 
   // Hotspots
-  getHotspots(): Observable<ApiResponse<{ hotspots: Hotspot[] }>> {
+  getHotspots(): Observable<any> {
     this.loading.set(true);
-    return this.api.get<{ hotspots: Hotspot[] }>('/api/hotspots').pipe(
+    return this.http.get<any>(`${environment.apiUrl}/api/hotspots`).pipe(
       tap(response => {
         this.loading.set(false);
-        if (response.success && response.data) {
-          this.hotspots.set(response.data.hotspots);
+        // Backend retorna: {"status":"success","hotspots":[...]}
+        if (response.status === 'success' && response.hotspots) {
+          this.hotspots.set(response.hotspots);
         }
       })
     );
