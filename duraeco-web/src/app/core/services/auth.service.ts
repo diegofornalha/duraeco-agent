@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { Observable, tap, catchError, throwError, map } from 'rxjs';
 import { environment } from '../../../environments/environment';
+import { UpdateUserResponse } from '../models/api-responses';
 
 export interface User {
   user_id: number;
@@ -335,7 +336,7 @@ export class AuthService {
   }
 
   updateUser(userId: number, data: Partial<User>): Observable<ApiResponse<User>> {
-    return this.http.patch<any>(`${this.baseUrl}/api/users/${userId}`, data).pipe(
+    return this.http.patch<UpdateUserResponse>(`${this.baseUrl}/api/users/${userId}`, data).pipe(
       tap(response => {
         // Backend retorna: {status: "success", message: "...", user: {...}}
         if (response && response.user) {

@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Type Safety no Frontend** (2025-12-05)
+  - Removidos 9 usos de `any` no TypeScript
+  - Criado arquivo `api-responses.ts` com interfaces tipadas
+  - `DeviceInfo`, `GetReportsResponse`, `CreateReportResponse`, `UpdateUserResponse`
+  - Melhorado IntelliSense e type checking no VS Code
+
+- **Campo user_id Redundante** (2025-12-05)
+  - Removido campo `user_id` não utilizado do modelo `ChatRequest`
+  - Backend sempre usa `user_id` extraído do JWT via `Depends(get_user_from_token)`
+  - Código mais limpo e sem validações desnecessárias
+
+### Changed
+- **Dependências do Backend Fixadas** (2025-12-05)
+  - Todas dependências agora têm versões específicas em `requirements.txt`
+  - Atualizações de segurança críticas:
+    - `PyJWT==2.10.1` (autenticação segura)
+    - `bcrypt==4.2.1` (hash de senhas)
+    - `Pillow==11.0.0` (processamento de imagens, CVEs corrigidos)
+    - `requests==2.32.3` (HTTP seguro)
+    - `mysql-connector-python==9.1.0` (driver MySQL atualizado)
+  - Versões atuais fixadas:
+    - `fastapi==0.123.9`
+    - `uvicorn==0.38.0`
+    - `pydantic==2.12.5`
+    - `bedrock-agentcore==1.1.1`
+    - `boto3==1.42.3`
+  - Builds agora são 100% reproduzíveis
+
+### Added
+- **Refresh Token System** (2025-12-05)
+  - New `refresh_tokens` table in database with revocation support
+  - `POST /api/auth/refresh` - Generate new access token (rate limited: 60/hour)
+  - `POST /api/auth/logout` - Revoke refresh token on logout
+  - Background job for automatic token cleanup (daily at 3 AM)
+  - Frontend: Auto-refresh 5 minutes before token expiration
+  - Frontend: Automatic retry with refresh on 401 errors
+  - Dependency: `apscheduler==3.11.1` for scheduled tasks
+
 ### Changed
 - **BREAKING CHANGE**: Chat endpoints now use JWT authentication instead of X-API-Key (2025-12-05)
   - `/api/chat` - POST endpoint requires JWT Bearer token
@@ -19,18 +58,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Frontend: Removed API Key input UI from chat page
   - Frontend: `ChatService.sendMessage()` no longer requires `apiKey` parameter
 
+- **Access Token Duration** (2025-12-05)
+  - Reduced from 24 hours to 6 hours for improved security
+  - New environment variable: `ACCESS_TOKEN_EXPIRE_HOURS` (default: 6)
+  - New environment variable: `REFRESH_TOKEN_EXPIRE_DAYS` (default: 7)
+
+- **Authentication Endpoints** (2025-12-05)
+  - `/api/auth/login` now returns `refresh_token` in response
+  - `/api/auth/register` now returns `refresh_token` in response
+  - Frontend: `AuthService` now manages refresh tokens automatically
+  - Frontend: `authInterceptor` implements automatic token refresh on 401
+
 ### Removed
 - **BREAKING CHANGE**: `API_SECRET_KEY` environment variable no longer used or required
 - Frontend: API Key management UI and localStorage storage
+- Frontend: Deprecated `duraeco_api_key` localStorage key (auto-cleanup on app load)
 
 ### Fixed
 - MCP server can now properly call chat endpoints using JWT authentication
 - API authentication is now consistent across all endpoints (JWT only)
+- Frontend: Chat errors now properly displayed to users with dismissible alerts
 
 ### Security
-- Improved: All endpoints now use JWT with 24-hour expiration
-- Improved: Token-based authentication provides better audit trail (per-user tokens)
-- Removed: Shared API key authentication (security improvement)
+- **Improved**: Access tokens reduced from 24h to 6h (smaller attack window if leaked)
+- **Improved**: Refresh tokens stored in database with revocation capability
+- **Improved**: Automatic cleanup of expired/revoked tokens daily
+- **Improved**: Token-based authentication provides better audit trail (per-user tokens)
+- **Improved**: Logout now properly invalidates refresh tokens server-side
+- **Removed**: Shared API key authentication (security improvement)
 
 ---
 

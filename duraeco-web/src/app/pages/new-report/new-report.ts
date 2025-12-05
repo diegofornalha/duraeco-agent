@@ -261,7 +261,7 @@ export class NewReport {
       image_data: this.imagePreview() || undefined
     }).subscribe({
       next: (response) => {
-        if (response.success) {
+        if (response.status === 'success') {
           this.success.set(true);
           setTimeout(() => {
             this.router.navigate(['/reports']);

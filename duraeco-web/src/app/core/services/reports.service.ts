@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
 import { ApiService, ApiResponse } from './api.service';
 import { environment } from '../../../environments/environment';
+import { DeviceInfo, GetReportsResponse, CreateReportResponse } from '../models/api-responses';
 
 export interface WasteType {
   waste_type_id: number;
@@ -22,7 +23,7 @@ export interface Report {
   description?: string;
   status: 'submitted' | 'analyzing' | 'analyzed' | 'resolved' | 'rejected';
   image_url?: string;
-  device_info?: any;
+  device_info?: DeviceInfo;
   address_text?: string;
   severity_score?: number;
   priority_level?: string;
@@ -48,7 +49,7 @@ export interface CreateReportRequest {
   longitude: number;
   description: string;
   image_data?: string; // Base64
-  device_info?: any;
+  device_info?: DeviceInfo;
 }
 
 export interface NearbyRequest {
@@ -69,7 +70,7 @@ export interface DashboardStatistics {
   severity_distribution: { severity_score: number; count: number }[];
   priority_distribution: { priority_level: string; count: number }[];
   monthly_reports: { month: string; count: number }[];
-  recent_reports: any[];
+  recent_reports: Report[];
   community_stats: {
     total_registered_users: number;
     total_contributors: number;
@@ -107,9 +108,9 @@ export class ReportsService {
   );
 
   // Reports
-  getReports(page = 1, limit = 20): Observable<any> {
+  getReports(page = 1, limit = 20): Observable<GetReportsResponse> {
     this.loading.set(true);
-    return this.http.get<any>(`${environment.apiUrl}/api/reports?page=${page}&limit=${limit}`).pipe(
+    return this.http.get<GetReportsResponse>(`${environment.apiUrl}/api/reports?page=${page}&limit=${limit}`).pipe(
       tap(response => {
         this.loading.set(false);
         // Backend retorna: {status: "success", reports: [...], pagination: {...}}
@@ -124,9 +125,9 @@ export class ReportsService {
     return this.api.get<Report>(`/api/reports/${reportId}`);
   }
 
-  createReport(data: CreateReportRequest): Observable<any> {
+  createReport(data: CreateReportRequest): Observable<CreateReportResponse> {
     this.loading.set(true);
-    return this.http.post<any>(`${environment.apiUrl}/api/reports`, data).pipe(
+    return this.http.post<CreateReportResponse>(`${environment.apiUrl}/api/reports`, data).pipe(
       tap(response => {
         this.loading.set(false);
         // Backend retorna: {status: "success", message: "...", report_id: number}
@@ -188,7 +189,7 @@ export class ReportsService {
   }
 
   // Dashboard
-  getStatistics(): Observable<any> {
+  getStatistics(): Observable<DashboardStatistics> {
     this.loading.set(true);
     return this.http.get<DashboardStatistics>(`${environment.apiUrl}/api/dashboard/statistics`).pipe(
       tap(response => {

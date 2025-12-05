@@ -72,6 +72,48 @@
 - ✅ Migração suave (backward-compatible)
 - ✅ Limpeza automática de tokens expirados
 
+#### Débitos Técnicos de Qualidade de Código
+**Prioridade:** Baixa
+**Status:** ✅ **CONCLUÍDO** (2025-12-05)
+
+**Problemas resolvidos:**
+
+1. **Type Safety no Frontend**
+   - ~~9 usos de `any` no TypeScript reduziam type safety~~
+   - ~~IntelliSense prejudicado~~
+
+2. **Campo user_id Redundante**
+   - ~~`ChatRequest.user_id` enviável mas nunca usado~~
+   - ~~Validação desnecessária no backend~~
+
+3. **Dependências Desatualizadas**
+   - ~~18 de 19 pacotes sem versionamento fixado~~
+   - ~~Builds não-reproduzíveis~~
+   - ~~Riscos de segurança (PyJWT, bcrypt, Pillow sem versões)~~
+
+**Solução implementada:**
+- **Frontend** (`duraeco-web/src/app/`):
+  - Criado `core/models/api-responses.ts` com interfaces tipadas
+  - `DeviceInfo`, `GetReportsResponse`, `CreateReportResponse`, `UpdateUserResponse`
+  - Atualizados `reports.service.ts` e `auth.service.ts` (9 mudanças)
+  - Build sem erros TypeScript, IntelliSense melhorado
+
+- **Backend** (`backend-ai/`):
+  - Removido campo `user_id` do modelo `ChatRequest`
+  - Removida validação desnecessária no endpoint `/api/chat`
+  - `requirements.txt` com todas versões fixadas:
+    - Segurança: `PyJWT==2.10.1`, `bcrypt==4.2.1`, `Pillow==11.0.0`, `requests==2.32.3`
+    - Framework: `fastapi==0.123.9`, `pydantic==2.12.5`, `uvicorn==0.38.0`
+    - AWS/AI: `bedrock-agentcore==1.1.1`, `boto3==1.42.3`
+  - Builds 100% reproduzíveis
+
+**Benefícios alcançados:**
+- ✅ Type checking robusto no frontend
+- ✅ Código backend mais limpo (sem campos redundantes)
+- ✅ Segurança melhorada (dependências críticas atualizadas)
+- ✅ Reprodutibilidade garantida (pip install exato)
+- ✅ Proteção contra CVEs em Pillow e outras libs
+
 ---
 
 ### 🎯 Backend
@@ -216,7 +258,6 @@
 ### Backend
 - [ ] Relatórios sem imagem ficam com status `submitted` indefinidamente
 - [ ] Hotspots não são atualizados quando relatórios são deletados
-- [ ] Token JWT não tem refresh automático
 
 ### Frontend
 - [ ] Página de profile não mostra imagem do usuário

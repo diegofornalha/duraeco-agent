@@ -3663,7 +3663,6 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     session_id: Optional[str] = None
-    user_id: Optional[int] = None  # Required for message persistence
 
 # Database tool functions for AgentCore
 def get_waste_statistics() -> dict:
@@ -3878,13 +3877,6 @@ def execute_sql_query(sql_query: str) -> dict:
 @limiter.limit("30/minute")  # Rate limit: 30 requests per minute per IP
 async def chat_with_agentcore(chat_request: ChatRequest, request: Request, user_id: int = Depends(get_user_from_token)):
     """Chat endpoint using AgentCore with database tools - Requires JWT"""
-    # Validate that chat_request.user_id (if provided) matches authenticated user
-    if chat_request.user_id and chat_request.user_id != user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Forbidden: Cannot create chat for another user"
-        )
-
     try:
         # Generate session ID if not provided
         session_id = chat_request.session_id or f"chat_{datetime.now().timestamp()}"

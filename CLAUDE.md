@@ -12,7 +12,7 @@ DuraEco e um sistema autonomo de monitoramento de residuos com IA para o Brasil.
 duraeco/
 ├── backend-ai/          # Backend FastAPI + Bedrock AgentCore
 ├── duraeco-web/         # Frontend Angular 21 + TailwindCSS 4
-└── database/            # Schema MySQL/TiDB (19 tabelas, embeddings VECTOR)
+└── database/            # Schema MySQL/TiDB (20 tabelas, embeddings VECTOR)
 ```
 
 **Fluxo Principal de IA:**
@@ -64,8 +64,9 @@ bun test      # ou ng test
 | Diretorio | Descricao |
 |-----------|-----------|
 | `core/guards/auth.guard.ts` | `authGuard` (rotas protegidas), `guestGuard` (login/register) |
-| `core/interceptors/auth.interceptor.ts` | Injeta JWT em requisicoes, trata 401 |
+| `core/interceptors/auth.interceptor.ts` | Injeta JWT em requisicoes, trata 401, auto-refresh em 401 |
 | `core/services/` | `AuthService`, `ReportsService`, `ChatService`, `ApiService` |
+| `core/models/api-responses.ts` | Interfaces tipadas: `DeviceInfo`, `GetReportsResponse`, `CreateReportResponse`, `UpdateUserResponse` |
 | `pages/` | Componentes lazy-loaded: dashboard, reports, hotspots, chat, profile |
 | `app.routes.ts` | Configuracao de rotas com guards |
 
@@ -91,8 +92,9 @@ Ferramentas auxiliares em `agentcore_tools.py`:
 
 - **Tipo:** MySQL 8.0.30+ / TiDB com suporte VECTOR(1024)
 - **Nome:** `db_duraeco` (producao) ou conforme `.env`
-- **Tabelas principais:** users, reports, analysis_results, hotspots, waste_types, chat_sessions, chat_messages
+- **Tabelas principais:** users, reports, analysis_results, hotspots, waste_types, chat_sessions, chat_messages, refresh_tokens
 - **Embeddings vetoriais:** `analysis_results.image_embedding` e `location_embedding` para busca por similaridade
+- **Autenticação:** Sistema de refresh tokens com revogação (access token: 6h, refresh token: 7 dias)
 
 ```sql
 -- Busca por similaridade de imagem
@@ -113,7 +115,9 @@ DB_PORT=3306
 
 # JWT (obrigatorias)
 JWT_SECRET=your-secret-key
-JWT_EXPIRATION_HOURS=24
+JWT_EXPIRATION_HOURS=24  # Legacy (deprecated, use ACCESS_TOKEN_EXPIRE_HOURS)
+ACCESS_TOKEN_EXPIRE_HOURS=6     # Access token duration: 6 hours
+REFRESH_TOKEN_EXPIRE_DAYS=7     # Refresh token duration: 7 days
 
 # CORS
 ALLOWED_ORIGINS=http://localhost:4200,http://localhost:3000
@@ -131,8 +135,10 @@ MCP_AUTH_TOKEN=Bearer eyJhbGci...
 ## Endpoints da API
 
 ### Autenticacao
-- `POST /api/auth/register` - Registro direto (sem OTP)
-- `POST /api/auth/login` - Login com username/password
+- `POST /api/auth/register` - Registro direto (sem OTP), retorna `{token, refresh_token, user}`
+- `POST /api/auth/login` - Login com username/password, retorna `{token, refresh_token, user}`
+- `POST /api/auth/refresh` - Renovar access token (rate limit: 60/hour)
+- `POST /api/auth/logout` - Revogar refresh token (requer JWT)
 - `POST /api/auth/verify-otp` - Verificacao OTP
 - `POST /api/auth/change-password` - Alterar senha
 
@@ -171,8 +177,19 @@ MCP_AUTH_TOKEN=Bearer eyJhbGci...
 # Erro
 {"status": "error", "error": "...", "detail": "..."}
 
-# Com token (login/register)
-{"token": "jwt...", "user": {...}}
+# Com token (login/register/refresh)
+{"token": "jwt...", "refresh_token": "uuid...", "user": {...}}
+```
+
+### Modelos Importantes
+
+**ChatRequest** (`app.py`):
+```python
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+    session_id: Optional[str] = None
+    # Nota: user_id é extraído automaticamente do JWT via Depends(get_user_from_token)
+    # Não é necessário enviar user_id no corpo da requisição
 ```
 
 ### Backend Python
@@ -180,14 +197,20 @@ MCP_AUTH_TOKEN=Bearer eyJhbGci...
 - Sempre fechar cursor/connection em `finally`
 - Tarefas async: `background_tasks.add_task()` para processamento de IA
 - Queries SQL sempre parametrizadas (`%s` placeholders)
-- JWT expira em 24h (algoritmo HS256)
+- JWT: Access tokens expiram em 6h, refresh tokens em 7 dias (algoritmo HS256)
+- Dependências fixadas em `requirements.txt` (builds reproduzíveis)
+  - Segurança: `PyJWT==2.10.1`, `bcrypt==4.2.1`, `Pillow==11.0.0`
+  - Framework: `fastapi==0.123.9`, `pydantic==2.12.5`, `uvicorn==0.38.0`
+  - AI: `bedrock-agentcore==1.1.1`, `boto3==1.42.3`
 
 ### Frontend Angular
 - Componentes standalone com lazy loading via `loadComponent()`
 - State management com Angular Signals (`signal()`, `computed()`)
 - Guards funcionais: `authGuard`, `guestGuard`
-- Interceptor funcional para JWT: `authInterceptor`
+- Interceptor funcional para JWT: `authInterceptor` (auto-refresh em 401)
 - Services com `providedIn: 'root'`
+- Type safety completo: Interfaces tipadas para todas respostas da API (sem uso de `any`)
+- Auto-refresh de tokens: Renovação automática 5 minutos antes de expirar
 
 ## Deteccao de Hotspots
 
@@ -203,17 +226,21 @@ Hotspots sao criados automaticamente quando 3+ relatorios existem em raio de 500
 
 ## MCP Servers
 
-Dois servidores MCP disponiveis para Claude Code:
+Dois servidores MCP disponiveis para Claude Code (✅ **100% Funcionais**):
 
 1. **duraeco-backend** (`mcp_server.py`)
-   - Expoe todos endpoints FastAPI como ferramentas
+   - Expoe todos endpoints FastAPI como ferramentas MCP
    - Suporta autenticacao via `MCP_AUTH_TOKEN`
+   - Endpoints públicos: `/health`, `/api/waste-types`
+   - Endpoints autenticados: `/api/chat`, `/api/reports`, `/api/dashboard/statistics`, `/api/hotspots`
+   - **Status:** ✅ Testado e funcionando (health check OK, JWT funcionando)
 
 2. **mysql-duraeco** (`mysql_mcp_server.py`)
-   - `execute_query` - SELECT queries (somente leitura)
-   - `list_tables` - Listar tabelas
-   - `describe_table` - Estrutura de tabela
-   - `table_stats` - Estatisticas
+   - `list_tables` - Listar todas tabelas (20 tabelas disponíveis)
+   - `describe_table` - Estrutura detalhada de tabela (colunas, tipos, constraints)
+   - `execute_query` - SELECT queries (somente leitura, seguro)
+   - `table_stats` - Estatísticas de tabelas
+   - **Status:** ✅ Testado e funcionando (conexão com `db_duraeco` OK)
 
 Configuracao em `~/.claude.json`:
 ```json
