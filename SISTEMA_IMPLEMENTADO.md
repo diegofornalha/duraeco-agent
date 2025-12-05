@@ -116,7 +116,6 @@ Status: ✅ Pronto para uso
 - Visualização de imagens
 - Mapa de localização (Google Maps)
 - Exclusão de relatórios
-- Informação sobre app móvel para criar novos relatórios
 
 ### 5. Hotspots (`src/app/pages/hotspots/hotspots.ts`)
 ✅ **Recursos:**

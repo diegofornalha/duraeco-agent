@@ -15,8 +15,6 @@ duraeco/
 └── database/            # Schema MySQL/TiDB (19 tabelas, embeddings VECTOR)
 ```
 
-**Nota:** O aplicativo movel Flutter esta em repositorio separado (`duraeco/`).
-
 **Fluxo Principal de IA:**
 Usuario submete imagem → AgentCore analisa residuo → Salva resultado no banco → Detecta hotspots automaticamente
 
@@ -153,11 +151,15 @@ MCP_AUTH_TOKEN=Bearer eyJhbGci...
 - `GET /api/dashboard/statistics` - Estatisticas do dashboard
 
 ### Chat de IA
-- `POST /api/chat` - Chat com agente (tool calls multi-round)
-- `GET /api/chat/sessions` - Listar sessoes de chat
-- `GET /api/chat/sessions/{id}/messages` - Mensagens de uma sessao
+- `POST /api/chat` - Chat com agente (requer JWT, tool calls multi-round)
+- `GET /api/chat/sessions` - Listar sessoes de chat (requer JWT)
+- `GET /api/chat/sessions/{id}/messages` - Mensagens de uma sessao (requer JWT)
+- `PATCH /api/chat/sessions/{id}` - Atualizar titulo de sessao (requer JWT)
+- `DELETE /api/chat/sessions/{id}` - Deletar sessao de chat (requer JWT)
 
 **Rate Limits:** `/api/chat` 30/min, `/api/reports` POST 20/hour, `/api/auth/register` 5/min
+
+**Autenticacao:** Todos os endpoints de chat agora usam JWT via header `Authorization: Bearer <token>`. O `authInterceptor` no frontend injeta o token automaticamente.
 
 ## Padroes de Codigo
 

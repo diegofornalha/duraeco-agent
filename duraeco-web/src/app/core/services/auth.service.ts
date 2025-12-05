@@ -66,6 +66,7 @@ export class AuthService {
 
   constructor() {
     this.loadFromStorage();
+    this.migrateDeprecatedKeys();
   }
 
   private loadFromStorage(): void {
@@ -81,6 +82,25 @@ export class AuthService {
           this.currentUser.set(JSON.parse(storedUser));
         } catch {
           localStorage.removeItem('user');
+        }
+      }
+    }
+  }
+
+  private migrateDeprecatedKeys(): void {
+    if (typeof window !== 'undefined') {
+      try {
+        const deprecatedKey = localStorage.getItem('duraeco_api_key');
+        if (deprecatedKey) {
+          localStorage.removeItem('duraeco_api_key');
+          if (!environment.production) {
+            console.log('[DuraEco] Migration: Removed deprecated "duraeco_api_key" from localStorage');
+          }
+        }
+      } catch (error) {
+        // Silently fail if localStorage is blocked/unavailable
+        if (!environment.production) {
+          console.warn('[DuraEco] Migration: Failed to clean deprecated keys', error);
         }
       }
     }

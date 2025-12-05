@@ -62,7 +62,7 @@ CREATE TABLE `users` (
 );
 ```
 - ❌ **Não tem campo `role`**
-- ✅ Todos os usuários do app mobile
+- ✅ Todos os usuários do sistema
 
 ### 2. Tabela `admin_users` (Administradores)
 ```sql

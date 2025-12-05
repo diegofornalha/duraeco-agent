@@ -1,5 +1,5 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
-import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { HttpClient } from '@angular/common/http';
 import { Observable, map, tap, catchError, throwError } from 'rxjs';
 import { environment } from '../../../environments/environment';
 
@@ -42,7 +42,7 @@ export class ChatService {
   readonly currentSessionId = computed(() => this.sessionId());
 
   // Enviar mensagem para o agente de IA
-  sendMessage(content: string, apiKey: string): Observable<ChatResponse> {
+  sendMessage(content: string): Observable<ChatResponse> {
     this.loading.set(true);
 
     // Adicionar mensagem do usuário
@@ -59,12 +59,8 @@ export class ChatService {
       session_id: this.sessionId() || undefined
     };
 
-    const headers = new HttpHeaders({
-      'Content-Type': 'application/json',
-      'X-API-Key': apiKey
-    });
-
-    return this.http.post<ChatResponse>(`${this.baseUrl}/api/chat`, request, { headers }).pipe(
+    // authInterceptor injeta Authorization: Bearer <token> automaticamente
+    return this.http.post<ChatResponse>(`${this.baseUrl}/api/chat`, request).pipe(
       tap(response => {
         this.loading.set(false);
         this.sessionId.set(response.session_id);

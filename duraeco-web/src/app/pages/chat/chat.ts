@@ -34,31 +34,6 @@ import { environment } from '../../../environments/environment';
         </div>
       </header>
 
-      <!-- API Key Input (se não configurado) -->
-      @if (!apiKey()) {
-        <div class="max-w-4xl mx-auto w-full p-4">
-          <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <h3 class="font-semibold text-yellow-800 mb-2">Configurar API Key</h3>
-            <p class="text-yellow-700 text-sm mb-3">
-              Para usar o chat com IA, você precisa configurar a API Key do sistema.
-            </p>
-            <div class="flex gap-2">
-              <input
-                type="password"
-                [(ngModel)]="apiKeyInput"
-                placeholder="Digite a API Key"
-                class="flex-1 px-4 py-2 border border-yellow-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent"
-              />
-              <button
-                (click)="saveApiKey()"
-                class="bg-yellow-600 text-white px-4 py-2 rounded-lg hover:bg-yellow-700 transition"
-              >
-                Salvar
-              </button>
-            </div>
-          </div>
-        </div>
-      }
 
       <!-- Messages -->
       <div class="flex-1 overflow-y-auto p-4" #messagesContainer>
@@ -135,18 +110,34 @@ import { environment } from '../../../environments/environment';
       <!-- Input -->
       <div class="border-t bg-white p-4">
         <div class="max-w-4xl mx-auto">
+          @if (error()) {
+            <div class="mb-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-start gap-2">
+              <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              <div class="flex-1">
+                <p class="font-medium">Erro ao enviar mensagem</p>
+                <p class="text-sm">{{ error() }}</p>
+              </div>
+              <button (click)="error.set(null)" class="text-red-500 hover:text-red-700">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+          }
           <form (submit)="sendMessage($event)" class="flex gap-3">
             <input
               type="text"
               [(ngModel)]="messageInput"
               name="message"
               placeholder="Digite sua mensagem..."
-              [disabled]="chatService.isLoading() || !apiKey()"
+              [disabled]="chatService.isLoading()"
               class="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
             <button
               type="submit"
-              [disabled]="!messageInput.trim() || chatService.isLoading() || !apiKey()"
+              [disabled]="!messageInput.trim() || chatService.isLoading()"
               class="bg-emerald-600 text-white px-6 py-3 rounded-xl font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -166,8 +157,6 @@ export class Chat implements AfterViewChecked {
   @ViewChild('messagesContainer') private messagesContainer!: ElementRef;
 
   messageInput = '';
-  apiKeyInput = '';
-  readonly apiKey = signal<string | null>(null);
   readonly error = signal<string | null>(null);
 
   readonly suggestions = [
@@ -176,16 +165,6 @@ export class Chat implements AfterViewChecked {
     'Mostre um gráfico dos tipos de resíduos',
     'O que é o DuraEco?'
   ];
-
-  constructor() {
-    // Carregar API key do localStorage
-    if (typeof window !== 'undefined') {
-      const savedKey = localStorage.getItem('duraeco_api_key');
-      if (savedKey) {
-        this.apiKey.set(savedKey);
-      }
-    }
-  }
 
   ngAfterViewChecked(): void {
     this.scrollToBottom();
@@ -198,25 +177,15 @@ export class Chat implements AfterViewChecked {
     }
   }
 
-  saveApiKey(): void {
-    if (this.apiKeyInput.trim()) {
-      this.apiKey.set(this.apiKeyInput.trim());
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('duraeco_api_key', this.apiKeyInput.trim());
-      }
-      this.apiKeyInput = '';
-    }
-  }
-
   sendMessage(event: Event): void {
     event.preventDefault();
-    if (!this.messageInput.trim() || !this.apiKey()) return;
+    if (!this.messageInput.trim()) return;
 
     const message = this.messageInput.trim();
     this.messageInput = '';
     this.error.set(null);
 
-    this.chatService.sendMessage(message, this.apiKey()!).subscribe({
+    this.chatService.sendMessage(message).subscribe({
       error: (err) => {
         const errorMsg = err.error?.detail || 'Erro ao enviar mensagem';
         this.error.set(errorMsg);
@@ -225,7 +194,6 @@ export class Chat implements AfterViewChecked {
   }
 
   sendSuggestion(suggestion: string): void {
-    if (!this.apiKey()) return;
     this.messageInput = suggestion;
     this.sendMessage(new Event('submit'));
   }

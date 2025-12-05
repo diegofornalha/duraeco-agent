@@ -3724,20 +3724,18 @@ def execute_sql_query(sql_query: str) -> dict:
 
 @app.post("/api/chat")
 @limiter.limit("30/minute")  # Rate limit: 30 requests per minute per IP
-async def chat_with_agentcore(chat_request: ChatRequest, request: Request, x_api_key: str = Header(None, alias="X-API-Key")):
-    """Chat endpoint using AgentCore with database tools - Requires API Key"""
-    # Verify API key
-    expected_api_key = os.getenv('API_SECRET_KEY')
-    if not x_api_key or x_api_key != expected_api_key:
+async def chat_with_agentcore(chat_request: ChatRequest, request: Request, user_id: int = Depends(get_user_from_token)):
+    """Chat endpoint using AgentCore with database tools - Requires JWT"""
+    # Validate that chat_request.user_id (if provided) matches authenticated user
+    if chat_request.user_id and chat_request.user_id != user_id:
         raise HTTPException(
-            status_code=401,
-            detail="Unauthorized: Invalid or missing API key"
+            status_code=403,
+            detail="Forbidden: Cannot create chat for another user"
         )
 
     try:
         # Generate session ID if not provided
         session_id = chat_request.session_id or f"chat_{datetime.now().timestamp()}"
-        user_id = chat_request.user_id
 
         # Get the last user message
         user_message = chat_request.messages[-1].content if chat_request.messages else ""
@@ -4157,17 +4155,11 @@ User question: {user_message}"""
 
 @app.get("/api/chat/sessions")
 async def list_chat_sessions(
-    user_id: int,
     page: int = 1,
     per_page: int = 20,
-    x_api_key: str = Header(None, alias="X-API-Key")
+    user_id: int = Depends(get_user_from_token)
 ):
     """Get chat sessions for a user"""
-    # Verify API key
-    expected_api_key = os.getenv('API_SECRET_KEY')
-    if not x_api_key or x_api_key != expected_api_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
     result = get_chat_sessions(user_id, page, per_page)
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
@@ -4177,17 +4169,11 @@ async def list_chat_sessions(
 @app.get("/api/chat/sessions/{session_id}/messages")
 async def list_session_messages(
     session_id: str,
-    user_id: int,
     page: int = 1,
     per_page: int = 50,
-    x_api_key: str = Header(None, alias="X-API-Key")
+    user_id: int = Depends(get_user_from_token)
 ):
     """Get messages for a specific chat session"""
-    # Verify API key
-    expected_api_key = os.getenv('API_SECRET_KEY')
-    if not x_api_key or x_api_key != expected_api_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
     result = get_chat_messages(session_id, user_id, page, per_page)
     if "error" in result:
         if "not found" in result["error"].lower():
@@ -4203,15 +4189,9 @@ class UpdateSessionTitle(BaseModel):
 async def update_chat_session_title(
     session_id: str,
     update_data: UpdateSessionTitle,
-    user_id: int,
-    x_api_key: str = Header(None, alias="X-API-Key")
+    user_id: int = Depends(get_user_from_token)
 ):
     """Update the title of a chat session"""
-    # Verify API key
-    expected_api_key = os.getenv('API_SECRET_KEY')
-    if not x_api_key or x_api_key != expected_api_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
     success = update_session_title(session_id, user_id, update_data.title)
     if not success:
         raise HTTPException(status_code=404, detail="Session not found or update failed")
@@ -4221,15 +4201,9 @@ async def update_chat_session_title(
 @app.delete("/api/chat/sessions/{session_id}")
 async def delete_chat_session_endpoint(
     session_id: str,
-    user_id: int,
-    x_api_key: str = Header(None, alias="X-API-Key")
+    user_id: int = Depends(get_user_from_token)
 ):
     """Delete a chat session and all its messages"""
-    # Verify API key
-    expected_api_key = os.getenv('API_SECRET_KEY')
-    if not x_api_key or x_api_key != expected_api_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
     success = delete_chat_session(session_id, user_id)
     if not success:
         raise HTTPException(status_code=404, detail="Session not found or delete failed")

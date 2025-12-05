@@ -13,7 +13,7 @@ Complete database schema for the duraeco environmental waste monitoring system. 
 - **VECTOR(1024)** embeddings for semantic similarity search via Amazon Titan Embed
 - **AI analysis results** with confidence scores and severity classification
 - **Geospatial indexing** for hotspot detection and mapping
-- **Multi-application access** from mobile app (Flutter), web dashboard (Next.js), and admin panel
+- **Multi-application access** from web dashboard (Angular 21) and admin panel
 
 For complete architecture, see [Diagram/README.md](../Diagram/README.md).
 
@@ -205,7 +205,7 @@ erDiagram
 
 #### 1. **users**
 
-User authentication and profiles for mobile app.
+User authentication and profiles for web application.
 
 | Column                | Type         | Description                       |
 | --------------------- | ------------ | --------------------------------- |
@@ -222,7 +222,7 @@ User authentication and profiles for mobile app.
 
 #### 2. **reports**
 
-Waste reports submitted by users via mobile app.
+Waste reports submitted by users via web application.
 
 | Column         | Type          | Description                                                  |
 | -------------- | ------------- | ------------------------------------------------------------ |
@@ -235,7 +235,7 @@ Waste reports submitted by users via mobile app.
 | `description`  | TEXT          | User-provided description                                    |
 | `status`       | ENUM          | `submitted`, `analyzing`, `analyzed`, `resolved`, `rejected` |
 | `image_url`    | VARCHAR(255)  | AWS S3 image URL                                             |
-| `device_info`  | JSON          | Mobile device metadata                                       |
+| `device_info`  | JSON          | Client device/browser metadata                               |
 | `address_text` | VARCHAR(255)  | Reverse geocoded address                                     |
 
 **Indexes**: `(latitude, longitude)`, `(status)`, `(user_id)`, `(status, report_date)`
@@ -622,10 +622,8 @@ For complete system architecture, see [Diagram/README.md](../Diagram/README.md).
 
 ## 📞 Additional Documentation
 
-- **📱 Mobile App**: [../duraeco/README.md](../duraeco/README.md)
-- **⚡ Backend API**: [../mobile_backend/README.md](../mobile_backend/README.md)
-- **🌐 Public Dashboard**: [../duraeco_public_dahboard/README.md](../duraeco_public_dahboard/README.md)
-- **👨‍💼 Admin Panel**: [../duraeco_admin_panel/README.md](../duraeco_admin_panel/README.md)
+- **🌐 Web Dashboard**: [../duraeco-web/README.md](../duraeco-web/README.md)
+- **⚡ Backend API**: [../backend-ai/README.md](../backend-ai/README.md)
 - **📊 System architecture**: [../Diagram/README.md](../Diagram/README.md)
 - **📄 Main Project**: [../README.md](../README.md)
 
