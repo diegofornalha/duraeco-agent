@@ -984,8 +984,66 @@ async def process_report_with_agent_async(report_id, image_url, latitude, longit
         logger.error(f"AgentCore async processing failed for report {report_id}: {e}")
         return None, None
 
-# REMOVIDO: Core functionality for image analysis with Amazon Nova Pro via AgentCore
-# Esta função foi substituída por analyze_waste_image que usa Claude Opus 4.5 Vision
+
+async def analyze_image_with_bedrock(image_url, latitude=0.0, longitude=0.0, description=""):
+    """
+    Analyze a waste image using Claude Opus 4.5 Vision
+    Wrapper function that maintains backwards compatibility
+
+    Args:
+        image_url: URL to the image
+        latitude: Latitude coordinate
+        longitude: Longitude coordinate
+        description: User-provided description
+
+    Returns:
+        Tuple of (analysis_result dict, image_data base64 string)
+    """
+    try:
+        logger.info(f"Analyzing image with Claude Vision from: {image_url}")
+
+        # Download the image
+        import concurrent.futures
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            response = await loop.run_in_executor(executor, requests.get, image_url)
+
+        if response.status_code != 200:
+            logger.error(f"Failed to download image from {image_url}: {response.status_code}")
+            return None, None
+
+        # Convert image to base64
+        image_data = base64.b64encode(response.content).decode('utf-8')
+        logger.info(f"Converted image to base64 format (length: {len(image_data)} chars)")
+
+        # Call analyze_waste_image for analysis
+        agent_payload = {
+            "image_url": image_url,
+            "image_base64": image_data,
+            "location": {"lat": latitude, "lng": longitude},
+            "description": description
+        }
+
+        # Run in thread pool to avoid blocking
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            agent_result = await loop.run_in_executor(
+                executor, analyze_waste_image, agent_payload
+            )
+
+        if agent_result:
+            logger.info(f"Image analysis completed successfully")
+            return agent_result, image_data
+        else:
+            logger.error("Image analysis returned no result")
+            return None, None
+
+    except Exception as e:
+        logger.error(f"Error in analyze_image_with_bedrock: {e}")
+        return None, None
+
+
+# NOTA: A implementação antiga usando Amazon Bedrock/Nova foi removida
+# Agora usamos Claude Opus 4.5 Vision via analyze_waste_image
 # async def analyze_image_with_bedrock(image_url, latitude=0.0, longitude=0.0, description=""):
 #     """
 #     Analyze a waste image using Amazon Nova Pro via AgentCore
