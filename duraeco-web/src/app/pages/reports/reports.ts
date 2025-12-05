@@ -1,8 +1,9 @@
-import { Component, inject, ChangeDetectionStrategy, signal, afterNextRender, effect } from '@angular/core';
+import { Component, inject, ChangeDetectionStrategy, signal, afterNextRender } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../../core/services/auth.service';
 import { ReportsService, Report } from '../../core/services/reports.service';
+import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-reports',
@@ -89,9 +90,17 @@ import { ReportsService, Report } from '../../core/services/reports.service';
                     <td class="px-6 py-4 text-gray-600">
                       {{ report.address_text || formatCoords(report.latitude, report.longitude) }}
                     </td>
-                    <td class="px-6 py-4 text-gray-600">{{ report.waste_type || 'N/A' }}</td>
+                    <td class="px-6 py-4 text-gray-600">
+                      @if (report.status === 'analyzing') {
+                        <span class="text-gray-400 italic">Analisando...</span>
+                      } @else {
+                        {{ report.waste_type || 'N/A' }}
+                      }
+                    </td>
                     <td class="px-6 py-4">
-                      @if (report.severity_score) {
+                      @if (report.status === 'analyzing') {
+                        <span class="text-gray-400 italic">...</span>
+                      } @else if (report.severity_score) {
                         <div class="flex items-center gap-1">
                           @for (i of [1,2,3,4,5,6,7,8,9,10]; track i) {
                             <div
@@ -213,10 +222,10 @@ import { ReportsService, Report } from '../../core/services/reports.service';
                 📍 Usar minha localização atual
               </button>
 
-              <!-- Imagem (opcional) -->
+              <!-- Imagem (obrigatória) -->
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">
-                  Foto (opcional)
+                  Foto *
                 </label>
                 <input
                   type="file"
@@ -240,7 +249,7 @@ import { ReportsService, Report } from '../../core/services/reports.service';
                 </button>
                 <button
                   type="submit"
-                  [disabled]="isSubmitting()"
+                  [disabled]="isSubmitting() || !imagePreview()"
                   class="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition disabled:opacity-50"
                 >
                   {{ isSubmitting() ? 'Enviando...' : 'Enviar Relatório' }}
@@ -267,7 +276,7 @@ import { ReportsService, Report } from '../../core/services/reports.service';
 
             @if (selectedReport()!.image_url) {
               <img
-                [src]="selectedReport()!.image_url"
+                [src]="getImageUrl(selectedReport()!.image_url)"
                 alt="Foto do relatório"
                 class="w-full h-48 object-cover rounded-lg mb-4"
               />
@@ -332,8 +341,8 @@ export class Reports {
 
   newReport = {
     description: '',
-    latitude: -8.5569,
-    longitude: 125.5603,
+    latitude: null as number | null,
+    longitude: null as number | null,
     image: null as File | null
   };
 
@@ -349,12 +358,6 @@ export class Reports {
       });
     });
 
-    // Obter localização automaticamente quando o modal abrir
-    effect(() => {
-      if (this.showNewReport()) {
-        this.getCurrentLocation();
-      }
-    });
   }
 
   viewReport(report: Report): void {
@@ -391,6 +394,9 @@ export class Reports {
         this.imagePreview.set(e.target?.result as string);
       };
       reader.readAsDataURL(file);
+
+      // Obter localização automaticamente quando a imagem é selecionada
+      this.getCurrentLocation();
     }
   }
 
@@ -401,6 +407,13 @@ export class Reports {
     const user = this.authService.user();
     if (!user) {
       alert('Você precisa estar logado para criar um relatório');
+      this.isSubmitting.set(false);
+      return;
+    }
+
+    // Validar que latitude e longitude não são null
+    if (this.newReport.latitude === null || this.newReport.longitude === null) {
+      alert('Por favor, obtenha sua localização antes de enviar');
       this.isSubmitting.set(false);
       return;
     }
@@ -418,8 +431,8 @@ export class Reports {
         // Resetar formulário
         this.newReport = {
           description: '',
-          latitude: -8.5569,
-          longitude: 125.5603,
+          latitude: null,
+          longitude: null,
           image: null
         };
         this.imagePreview.set(null);
@@ -439,9 +452,22 @@ export class Reports {
     return `${latNum.toFixed(4)}, ${lngNum.toFixed(4)}`;
   }
 
+  getImageUrl(url: string | undefined): string {
+    if (!url) return '';
+    // Se já é URL completa, retorna como está
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
+      return url;
+    }
+    // Se é caminho relativo, prefixar com API URL
+    return `${environment.apiUrl}${url}`;
+  }
+
   getStatusClass(status: string): string {
     const classes: Record<string, string> = {
+      submitted: 'bg-yellow-100 text-yellow-800',
       pending: 'bg-yellow-100 text-yellow-800',
+      analyzing: 'bg-blue-100 text-blue-800 animate-pulse',
+      analyzed: 'bg-green-100 text-green-800',
       verified: 'bg-blue-100 text-blue-800',
       in_progress: 'bg-purple-100 text-purple-800',
       resolved: 'bg-green-100 text-green-800',

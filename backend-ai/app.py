@@ -1288,9 +1288,9 @@ async def process_report(report_id, background_tasks: BackgroundTasks):
                 connection.commit()
                 waste_type_id = cursor.lastrowid
             
-            # Generate embeddings for non-garbage images (pass image_data for Titan Image Embed)
-            image_embedding = create_image_content_embedding(analysis_result, image_data)
-            location_embedding = create_location_embedding(report['latitude'], report['longitude'])
+            # TODO: Re-implement embeddings when Claude SDK supports it
+            image_embedding = None  # create_image_content_embedding removed (was AWS Bedrock)
+            location_embedding = None  # create_location_embedding removed (was AWS Bedrock)
             
             # Insert analysis results for non-garbage
             cursor.execute(
@@ -1395,8 +1395,8 @@ async def process_report(report_id, background_tasks: BackgroundTasks):
             connection.commit()
             waste_type_id = cursor.lastrowid
         
-        # Generate embeddings for waste images (pass image_data for Titan Image Embed)
-        image_embedding = create_image_content_embedding(analysis_result, image_data)
+        # TODO: Re-implement embeddings when Claude SDK supports it
+        image_embedding = None  # create_image_content_embedding removed (was AWS Bedrock)
         location_embedding = create_location_embedding(report['latitude'], report['longitude'])
         
         # Insert analysis results
