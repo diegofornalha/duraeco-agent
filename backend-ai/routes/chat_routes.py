@@ -6,7 +6,8 @@ Inspirado em: /Users/2a/Desktop/duraeco/backend-chat/server.py
 
 import time
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends, Header, HTTPException
+from typing import Optional
 
 from claude_agent_sdk import (
     ClaudeAgentOptions,
@@ -26,6 +27,22 @@ from core.session_manager import SessionManager
 from tools import duraeco_mcp_server
 
 logger = logging.getLogger(__name__)
+
+
+async def get_user_from_token(authorization: Optional[str] = Header(None)) -> int:
+    """Extract user ID from JWT token in Authorization header"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header required")
+
+    # Remove "Bearer " prefix if present
+    token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+
+    user_id = verify_token(token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return user_id
+
 
 router = APIRouter(prefix="/api/chat", tags=["chat-v2"])
 
@@ -249,11 +266,9 @@ Example queries:
 async def list_sessions(
     page: int = 1,
     per_page: int = 20,
-    user_id: int = None  # TODO: Extrair do JWT com Depends
+    user_id: int = Depends(get_user_from_token)
 ):
     """Lista sessões de chat do usuário"""
-    if not user_id:
-        return {"error": "user_id required"}
 
     try:
         result = await session_manager.get_user_sessions(user_id, page, per_page)
@@ -280,11 +295,9 @@ async def get_session_messages(
 @router.delete("/sessions/{session_id}")
 async def delete_session(
     session_id: str,
-    user_id: int = None  # TODO: Extrair do JWT com Depends
+    user_id: int = Depends(get_user_from_token)
 ):
     """Deleta uma sessão de chat"""
-    if not user_id:
-        return {"error": "user_id required"}
 
     try:
         await session_manager.delete_session(session_id, user_id)

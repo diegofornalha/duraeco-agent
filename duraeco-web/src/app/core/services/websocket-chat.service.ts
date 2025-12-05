@@ -392,12 +392,12 @@ export class WebSocketChatService {
    */
   loadSessions(): void {
     this.isLoadingSessions.set(true);
-    this.http.get<{ success?: boolean; status?: string; data: ChatSession[] }>(
+    this.http.get<{ success?: boolean; status?: string; data?: ChatSession[]; sessions?: ChatSession[] }>(
       `${environment.apiUrl}/api/chat/sessions`
     ).subscribe({
       next: (response) => {
         if (response.success || response.status === 'success') {
-          this.sessions.set(response.data || []);
+          this.sessions.set(response.sessions || response.data || []);
         }
         this.isLoadingSessions.set(false);
       },
@@ -414,13 +414,16 @@ export class WebSocketChatService {
   loadSession(sessionId: string): void {
     this.isLoadingSessions.set(true);
 
-    this.http.get<{ success?: boolean; status?: string; data: { session_id: string; title: string; messages: any[] } }>(
+    this.http.get<{ success?: boolean; status?: string; messages?: any[]; data?: { session_id: string; title: string; messages: any[] } }>(
       `${environment.apiUrl}/api/chat/sessions/${sessionId}/messages`
     ).subscribe({
       next: (response) => {
         if (response.success || response.status === 'success') {
+          // Suporta ambos os formatos: response.messages ou response.data.messages
+          const rawMessages = response.messages || response.data?.messages || [];
+
           // Converter mensagens do backend para o formato do frontend
-          const messages: ChatMessage[] = response.data.messages.map(m => ({
+          const messages: ChatMessage[] = rawMessages.map(m => ({
             role: m.role as 'user' | 'assistant',
             content: m.content,
             timestamp: new Date(m.created_at),
